@@ -73,4 +73,39 @@ public enum TalkConfigParsing {
             config: resolved["config"]?.dictionaryValue ?? [:],
             normalizedPayload: true)
     }
+
+    // MARK: - STT
+
+    public static func selectSttProviderConfig(
+        _ talk: [String: AnyCodable]?,
+        defaultProvider: String,
+        allowLegacyFallback: Bool = true,
+    ) -> TalkProviderConfigSelection? {
+        guard let talk else { return nil }
+        if let resolvedSelection = self.resolvedSttProviderConfig(talk) {
+            return resolvedSelection
+        }
+        let hasNormalizedPayload = talk["sttProvider"] != nil || talk["sttProviders"] != nil
+        if hasNormalizedPayload {
+            return nil
+        }
+        guard allowLegacyFallback else { return nil }
+        return TalkProviderConfigSelection(
+            provider: defaultProvider,
+            config: talk,
+            normalizedPayload: false)
+    }
+
+    private static func resolvedSttProviderConfig(
+        _ talk: [String: AnyCodable]
+    ) -> TalkProviderConfigSelection? {
+        guard
+            let resolved = talk["resolvedStt"]?.dictionaryValue,
+            let providerID = self.normalizedTalkProviderID(resolved["provider"]?.stringValue)
+        else { return nil }
+        return TalkProviderConfigSelection(
+            provider: providerID,
+            config: resolved["config"]?.dictionaryValue ?? [:],
+            normalizedPayload: true)
+    }
 }

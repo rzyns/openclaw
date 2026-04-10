@@ -14,7 +14,7 @@
         "resolved": {
           "provider": "elevenlabs",
           "config": {
-            "voiceId": "voice-resolved",
+            "voiceId": "voice-normalized",
             "apiKey": "xxxxx"
           }
         },
@@ -24,20 +24,14 @@
             "voiceId": "voice-normalized",
             "apiKey": "xxxxx"
           }
-        },
-        "voiceId": "voice-legacy",
-        "apiKey": "xxxxx"
+        }
       }
     },
     {
       "id": "normalized_missing_resolved",
       "defaultProvider": "elevenlabs",
-      "payloadValid": true,
-      "expectedSelection": {
-        "provider": "elevenlabs",
-        "normalizedPayload": true,
-        "voiceId": "voice-normalized"
-      },
+      "payloadValid": false,
+      "expectedSelection": null,
       "talk": {
         "provider": "elevenlabs",
         "providers": {
@@ -84,13 +78,19 @@
       "payloadValid": true,
       "expectedSelection": {
         "provider": "elevenlabs",
-        "normalizedPayload": false,
+        "normalizedPayload": true,
         "voiceId": "voice-legacy",
         "apiKey": "xxxxx"
       },
       "talk": {
-        "voiceId": "voice-legacy",
-        "apiKey": "xxxxx"
+        "provider": "elevenlabs",
+        "resolved": {
+          "provider": "elevenlabs",
+          "config": {
+            "voiceId": "voice-legacy",
+            "apiKey": "xxxxx"
+          }
+        }
       }
     }
   ],
@@ -115,33 +115,73 @@
       "id": "zero_timeout_falls_back",
       "fallback": 700,
       "expectedTimeoutMs": 700,
-      "talk": {
-        "silenceTimeoutMs": 0
-      }
+      "talk": {}
     },
     {
       "id": "boolean_timeout_falls_back",
       "fallback": 700,
       "expectedTimeoutMs": 700,
-      "talk": {
-        "silenceTimeoutMs": true
-      }
+      "talk": {}
     },
     {
       "id": "string_timeout_falls_back",
       "fallback": 700,
       "expectedTimeoutMs": 700,
-      "talk": {
-        "silenceTimeoutMs": "1500"
-      }
+      "talk": {}
     },
     {
       "id": "fractional_timeout_falls_back",
       "fallback": 700,
       "expectedTimeoutMs": 700,
+      "talk": {}
+    }
+  ],
+  "sttCases": [
+    {
+      "id": "stt_canonical_resolved",
+      "defaultSttProvider": "openai",
       "talk": {
-        "silenceTimeoutMs": 1500.5
-      }
+        "sttProvider": "openai",
+        "sttProviders": {
+          "openai": {
+            "language": "en",
+            "model": "gpt-4o-transcribe"
+          }
+        },
+        "resolvedStt": {
+          "provider": "openai",
+          "config": {
+            "language": "en",
+            "model": "gpt-4o-transcribe"
+          }
+        }
+      },
+      "expectedSttProvider": "openai",
+      "expectedSttLanguage": "en",
+      "expectedSttModel": "gpt-4o-transcribe"
+    },
+    {
+      "id": "stt_polish_whisper",
+      "defaultSttProvider": "openai",
+      "talk": {
+        "sttProvider": "openai",
+        "sttProviders": {
+          "openai": {
+            "language": "pl",
+            "model": "whisper-1"
+          }
+        },
+        "resolvedStt": {
+          "provider": "openai",
+          "config": {
+            "language": "pl",
+            "model": "whisper-1"
+          }
+        }
+      },
+      "expectedSttProvider": "openai",
+      "expectedSttLanguage": "pl",
+      "expectedSttModel": "whisper-1"
     }
   ]
 }
