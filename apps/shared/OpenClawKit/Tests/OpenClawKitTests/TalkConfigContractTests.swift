@@ -5,6 +5,7 @@ import Testing
 private struct TalkConfigContractFixture: Decodable {
     let selectionCases: [SelectionCase]
     let timeoutCases: [TimeoutCase]
+    let sttCases: [SttCase]?
 
     struct SelectionCase: Decodable {
         let id: String
@@ -26,6 +27,15 @@ private struct TalkConfigContractFixture: Decodable {
         let fallback: Int
         let expectedTimeoutMs: Int
         let talk: [String: AnyCodable]
+    }
+
+    struct SttCase: Decodable {
+        let id: String
+        let defaultSttProvider: String
+        let talk: [String: AnyCodable]
+        let expectedSttProvider: String
+        let expectedSttLanguage: String?
+        let expectedSttModel: String?
     }
 }
 
@@ -75,6 +85,18 @@ struct TalkConfigContractTests {
                     fixture.talk,
                     fallback: fixture.fallback) == fixture.expectedTimeoutMs,
                 "\(fixture.id)")
+        }
+    }
+
+    @Test func sttFixtures() throws {
+        guard let sttCases = try TalkConfigContractFixtureLoader.load().sttCases else { return }
+        for fixture in sttCases {
+            let selection = TalkConfigParsing.selectSttProviderConfig(
+                fixture.talk,
+                defaultProvider: fixture.defaultSttProvider)
+            #expect(selection?.provider == fixture.expectedSttProvider, "\(fixture.id)")
+            #expect(selection?.config["language"]?.stringValue == fixture.expectedSttLanguage, "\(fixture.id)")
+            #expect(selection?.config["model"]?.stringValue == fixture.expectedSttModel, "\(fixture.id)")
         }
     }
 }

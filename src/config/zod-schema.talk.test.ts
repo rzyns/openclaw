@@ -57,4 +57,32 @@ describe("OpenClawSchema talk validation", () => {
       }),
     ).toThrow(/talk\.provider|required/i);
   });
+
+  it("rejects talk.sttProvider when it does not match talk.sttProviders", () => {
+    expect(() =>
+      OpenClawSchema.parse({
+        talk: {
+          sttProvider: "acme",
+          sttProviders: {
+            openai: {
+              language: "pl",
+            },
+          },
+        },
+      }),
+    ).toThrow(/talk\.sttProvider|talk\.sttProviders|missing "acme"/i);
+  });
+
+  it("rejects multi-provider talk STT config without talk.sttProvider", () => {
+    expect(() =>
+      OpenClawSchema.parse({
+        talk: {
+          sttProviders: {
+            acme: { language: "pl" },
+            openai: { language: "en" },
+          },
+        },
+      }),
+    ).toThrow(/talk\.sttProvider|required/i);
+  });
 });

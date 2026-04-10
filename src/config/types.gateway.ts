@@ -51,6 +51,20 @@ export type CanvasHostConfig = {
 export type TalkProviderConfig = {
   /** Provider API key (optional; provider-specific env fallback may apply). */
   apiKey?: SecretInput;
+  // --- TTS fields (ElevenLabs etc.) ---
+  /** Voice ID (for ElevenLabs TTS). */
+  voiceId?: string;
+  /** Voice ID aliases for model routing. */
+  voiceAliases?: Record<string, string>;
+  /** Model ID (for TTS). */
+  modelId?: string;
+  /** Output format (for TTS). */
+  outputFormat?: string;
+  // --- STT fields (OpenAI, Whisper, etc.) ---
+  /** Language code (for STT, e.g. "en", "pl"). */
+  language?: string;
+  /** Model ID (for STT, e.g. "gpt-4o-transcribe"). */
+  model?: string;
   /** Provider-owned Talk config fields. */
   [key: string]: unknown;
 };
@@ -63,19 +77,32 @@ export type ResolvedTalkConfig = {
 };
 
 export type TalkConfig = {
-  /** Active Talk TTS provider (for example "acme-speech"). */
+  /** Active Talk TTS provider (for example "elevenlabs"). */
   provider?: string;
   /** Provider-specific Talk config keyed by provider id. */
   providers?: Record<string, TalkProviderConfig>;
+  /** Active Talk STT provider (for example "openai"). */
+  sttProvider?: string;
+  /** Provider-specific STT config keyed by provider id. */
+  sttProviders?: Record<string, TalkProviderConfig>;
   /** Stop speaking when user starts talking (default: true). */
   interruptOnSpeech?: boolean;
   /** Milliseconds of user silence before Talk mode sends the transcript after a pause. */
   silenceTimeoutMs?: number;
 };
 
+export type ResolvedSttConfig = {
+  /** Active Talk STT provider resolved from the current config payload. */
+  provider: string;
+  /** Provider config for the active Talk STT provider. */
+  config: TalkProviderConfig;
+};
+
 export type TalkConfigResponse = TalkConfig & {
   /** Canonical active Talk payload for clients. */
   resolved?: ResolvedTalkConfig;
+  /** Canonical active Talk STT payload for clients. */
+  resolvedStt?: ResolvedSttConfig;
 };
 
 export type GatewayControlUiConfig = {

@@ -12,12 +12,17 @@ struct TalkModeGatewayConfigState {
     let rawConfigApiKey: String?
     let interruptOnSpeech: Bool?
     let silenceTimeoutMs: Int
+    // STT config
+    let activeSttProvider: String
+    let sttLanguage: String?
+    let sttModel: String?
 }
 
 enum TalkModeGatewayConfigParser {
     static func parse(
         config: [String: Any],
         defaultProvider: String,
+        defaultSttProvider: String,
         defaultModelIdFallback: String,
         defaultSilenceTimeoutMs: Int
     ) -> TalkModeGatewayConfigState {
@@ -54,6 +59,19 @@ enum TalkModeGatewayConfigParser {
             talk,
             fallback: defaultSilenceTimeoutMs)
 
+        let sttSelection = TalkConfigParsing.selectSttProviderConfig(
+            talk,
+            defaultProvider: defaultSttProvider,
+            allowLegacyFallback: false)
+        let sttConfig = sttSelection?.config
+        let sttLanguage = sttConfig?["language"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sttModel = sttConfig?["model"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeSttProvider = sttSelection?.provider
+            ?? talk?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? defaultSttProvider
+
         return TalkModeGatewayConfigState(
             activeProvider: activeProvider,
             normalizedPayload: selection?.normalizedPayload == true,
@@ -64,6 +82,9 @@ enum TalkModeGatewayConfigParser {
             defaultOutputFormat: defaultOutputFormat,
             rawConfigApiKey: rawConfigApiKey,
             interruptOnSpeech: interruptOnSpeech,
-            silenceTimeoutMs: silenceTimeoutMs)
+            silenceTimeoutMs: silenceTimeoutMs,
+            activeSttProvider: activeSttProvider,
+            sttLanguage: sttLanguage,
+            sttModel: sttModel)
     }
 }

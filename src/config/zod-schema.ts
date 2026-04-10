@@ -181,6 +181,8 @@ const TalkSchema = z
   .object({
     provider: z.string().optional(),
     providers: z.record(z.string(), TalkProviderEntrySchema).optional(),
+    sttProvider: z.string().optional(),
+    sttProviders: z.record(z.string(), TalkProviderEntrySchema).optional(),
     interruptOnSpeech: z.boolean().optional(),
     silenceTimeoutMs: z.number().int().positive().optional(),
   })
@@ -202,6 +204,25 @@ const TalkSchema = z
         code: z.ZodIssueCode.custom,
         path: ["provider"],
         message: "talk.provider is required when talk.providers defines multiple providers",
+      });
+    }
+
+    const sttProvider = normalizeLowercaseStringOrEmpty(talk.sttProvider ?? "");
+    const sttProviders = talk.sttProviders ? Object.keys(talk.sttProviders) : [];
+
+    if (sttProvider && sttProviders.length > 0 && !(sttProvider in talk.sttProviders!)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sttProvider"],
+        message: `talk.sttProvider must match a key in talk.sttProviders (missing "${sttProvider}")`,
+      });
+    }
+
+    if (!sttProvider && sttProviders.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sttProvider"],
+        message: "talk.sttProvider is required when talk.sttProviders defines multiple providers",
       });
     }
   });

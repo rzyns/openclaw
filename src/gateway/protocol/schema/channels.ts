@@ -56,7 +56,18 @@ const TalkConfigSchema = Type.Object(
   {
     provider: Type.Optional(Type.String()),
     providers: Type.Optional(Type.Record(Type.String(), TalkProviderConfigSchema)),
-    resolved: ResolvedTalkConfigSchema,
+    sttProvider: Type.Optional(Type.String()),
+    sttProviders: Type.Optional(Type.Record(Type.String(), TalkProviderConfigSchema)),
+    resolved: Type.Optional(ResolvedTalkConfigSchema),
+    resolvedStt: Type.Optional(
+      Type.Object(
+        {
+          provider: Type.String(),
+          config: TalkProviderConfigSchema,
+        },
+        { additionalProperties: false },
+      ),
+    ),
     interruptOnSpeech: Type.Optional(Type.Boolean()),
     silenceTimeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
   },

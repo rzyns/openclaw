@@ -26507,6 +26507,27 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       tags: ["security", "auth", "media"],
       sensitive: true,
     },
+    "talk.sttProvider": {
+      label: "Talk Active STT Provider",
+      help: 'Active Talk STT provider id (for example "openai").',
+      tags: ["media"],
+    },
+    "talk.sttProviders": {
+      label: "Talk STT Provider Settings",
+      help: "Provider-specific Talk STT settings keyed by provider id.",
+      tags: ["media"],
+    },
+    "talk.sttProviders.*": {
+      label: "Talk STT Provider Config",
+      help: "Provider-owned Talk STT config fields for the matching provider id.",
+      tags: ["media"],
+    },
+    "talk.sttProviders.*.apiKey": {
+      label: "Talk STT Provider API Key",
+      help: "Provider API key for Talk STT mode.",
+      tags: ["security", "auth", "media"],
+      sensitive: true,
+    },
     "channels.defaults": {
       label: "Channel Defaults",
       help: "Default channel behavior applied across providers when provider-specific settings are not set. Use this to enforce consistent baseline policy before per-provider tuning.",

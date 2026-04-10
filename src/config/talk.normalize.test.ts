@@ -99,6 +99,55 @@ describe("talk normalization", () => {
     });
   });
 
+  it("normalizes and resolves STT provider config for clients", () => {
+    const normalized = normalizeTalkSection({
+      sttProvider: " openai ",
+      sttProviders: {
+        " openai ": {
+          language: "pl",
+          model: "gpt-4o-transcribe",
+        },
+      },
+    });
+
+    expect(normalized).toEqual({
+      sttProvider: "openai",
+      sttProviders: {
+        openai: {
+          language: "pl",
+          model: "gpt-4o-transcribe",
+        },
+      },
+    });
+
+    const payload = buildTalkConfigResponse({
+      sttProvider: "openai",
+      sttProviders: {
+        openai: {
+          language: "pl",
+          model: "gpt-4o-transcribe",
+        },
+      },
+    });
+
+    expect(payload).toEqual({
+      sttProvider: "openai",
+      sttProviders: {
+        openai: {
+          language: "pl",
+          model: "gpt-4o-transcribe",
+        },
+      },
+      resolvedStt: {
+        provider: "openai",
+        config: {
+          language: "pl",
+          model: "gpt-4o-transcribe",
+        },
+      },
+    });
+  });
+
   it("preserves SecretRef apiKey values during normalization", () => {
     const normalized = normalizeTalkSection({
       provider: TALK_TEST_PROVIDER_ID,
