@@ -52,6 +52,10 @@ import {
   TalkSpeakParamsSchema,
   type TalkSpeakResult,
   TalkSpeakResultSchema,
+  type TalkTranscribeParams,
+  TalkTranscribeParamsSchema,
+  type TalkTranscribeResult,
+  TalkTranscribeResultSchema,
   type ChannelsStatusParams,
   ChannelsStatusParamsSchema,
   type ChannelsStatusResult,
@@ -467,6 +471,12 @@ export const validateTalkConfigResult = ((data: unknown): data is TalkConfigResu
 }) as typeof validateTalkConfigResultSchema;
 export const validateTalkSpeakParams = ajv.compile<TalkSpeakParams>(TalkSpeakParamsSchema);
 export const validateTalkSpeakResult = ajv.compile<TalkSpeakResult>(TalkSpeakResultSchema);
+export const validateTalkTranscribeParams = ajv.compile<TalkTranscribeParams>(
+  TalkTranscribeParamsSchema,
+);
+export const validateTalkTranscribeResult = ajv.compile<TalkTranscribeResult>(
+  TalkTranscribeResultSchema,
+);
 export const validateChannelsStatusParams = ajv.compile<ChannelsStatusParams>(
   ChannelsStatusParamsSchema,
 );
@@ -652,6 +662,8 @@ export {
   TalkConfigResultSchema,
   TalkSpeakParamsSchema,
   TalkSpeakResultSchema,
+  TalkTranscribeParamsSchema,
+  TalkTranscribeResultSchema,
   ChannelsStatusParamsSchema,
   ChannelsStatusResultSchema,
   ChannelsLogoutParamsSchema,
@@ -755,6 +767,8 @@ export type {
   TalkConfigResult,
   TalkSpeakParams,
   TalkSpeakResult,
+  TalkTranscribeParams,
+  TalkTranscribeResult,
   TalkModeParams,
   ChannelsStatusParams,
   ChannelsStatusResult,

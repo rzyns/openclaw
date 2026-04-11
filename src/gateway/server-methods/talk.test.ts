@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../../config/config.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { talkHandlers } from "./talk.js";
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
   canonicalizeSpeechProviderId: vi.fn((providerId: string | undefined) => providerId),
   getSpeechProvider: vi.fn(),
   synthesizeSpeech: vi.fn(),
+  buildMediaUnderstandingRegistry: vi.fn(),
+  getMediaUnderstandingProvider: vi.fn(),
+  normalizeMediaProviderId: vi.fn((providerId: string | undefined) =>
+    providerId?.trim().toLowerCase() ?? ""
+  ),
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -24,6 +29,12 @@ vi.mock("../../tts/tts.js", () => ({
   synthesizeSpeech: mocks.synthesizeSpeech,
 }));
 
+vi.mock("../../media-understanding/provider-registry.js", () => ({
+  buildMediaUnderstandingRegistry: mocks.buildMediaUnderstandingRegistry,
+  getMediaUnderstandingProvider: mocks.getMediaUnderstandingProvider,
+  normalizeMediaProviderId: mocks.normalizeMediaProviderId,
+}));
+
 function createTalkConfig(apiKey: unknown): OpenClawConfig {
   return {
     talk: {
@@ -38,9 +49,38 @@ function createTalkConfig(apiKey: unknown): OpenClawConfig {
   } as OpenClawConfig;
 }
 
+function createTalkSttConfig(
+  providerConfig: Record<string, unknown>,
+  providerId = "deepgram",
+): OpenClawConfig {
+  return {
+    talk: {
+      sttProvider: providerId,
+      sttProviders: {
+        [providerId]: providerConfig,
+      },
+    },
+  } as OpenClawConfig;
+}
+
+async function invokeTalkTranscribe(params: unknown) {
+  const respond = vi.fn();
+  await talkHandlers["talk.transcribe"]({
+    req: { type: "req", id: "1", method: "talk.transcribe" },
+    params,
+    client: null,
+    isWebchatConnect: () => false,
+    respond: respond as never,
+    context: {} as never,
+  });
+  expect(respond).toHaveBeenCalledTimes(1);
+  return respond.mock.calls[0];
+}
+
 describe("talk.speak handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.buildMediaUnderstandingRegistry.mockReturnValue(new Map());
   });
 
   it("uses the active runtime config snapshot instead of the raw config snapshot", async () => {
@@ -111,5 +151,183 @@ describe("talk.speak handler", () => {
       }),
       undefined,
     );
+  });
+});
+
+describe("talk.transcribe handler", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.buildMediaUnderstandingRegistry.mockReturnValue(new Map());
+  });
+
+  it("rejects invalid params", async () => {
+    const [ok, result, error] = await invokeTalkTranscribe({ audioBase64: "" });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: expect.stringContaining("invalid talk.transcribe params"),
+    });
+  });
+
+  it("rejects missing Talk STT config", async () => {
+    mocks.loadConfig.mockReturnValue({} as OpenClawConfig);
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "UNAVAILABLE",
+      details: {
+        reason: "talk_stt_unconfigured",
+        retryable: false,
+      },
+    });
+    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported providers", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key" }));
+    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "deepgram" });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "UNAVAILABLE",
+      details: {
+        reason: "talk_stt_provider_unsupported",
+        retryable: false,
+      },
+    });
+  });
+
+  it("rejects non-string or missing resolved API keys", async () => {
+    mocks.loadConfig.mockReturnValue(
+      createTalkSttConfig({
+        apiKey: {
+          source: "env",
+          provider: "default",
+          id: "DEEPGRAM_API_KEY",
+        },
+      }),
+    );
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "UNAVAILABLE",
+      details: {
+        reason: "talk_stt_auth_unavailable",
+        retryable: false,
+      },
+    });
+    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
+  });
+
+  it("returns transcript, provider, and model on success", async () => {
+    const runtimeConfig = createTalkSttConfig({
+      apiKey: "test-key",
+      model: "nova-3",
+      language: "pl",
+      baseUrl: "https://stt.example/v1",
+      headers: {
+        "X-Test": "1",
+      },
+      request: {
+        headers: {
+          "X-Request": "cfg",
+        },
+      },
+      query: {
+        punctuate: true,
+      },
+    });
+    const registry = new Map();
+    const transcribeAudio = vi.fn().mockResolvedValue({
+      text: "  cześć  ",
+      model: "returned-model",
+    });
+
+    mocks.loadConfig.mockReturnValue(runtimeConfig);
+    mocks.buildMediaUnderstandingRegistry.mockReturnValue(registry);
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "deepgram",
+      transcribeAudio,
+    });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio-bytes").toString("base64"),
+      mimeType: "audio/wav",
+      fileExtension: "wav",
+      language: "en",
+    });
+
+    expect(ok).toBe(true);
+    expect(error).toBeUndefined();
+    expect(result).toEqual({
+      text: "cześć",
+      provider: "deepgram",
+      model: "returned-model",
+    });
+    expect(mocks.buildMediaUnderstandingRegistry).toHaveBeenCalledWith(undefined, runtimeConfig);
+    expect(mocks.getMediaUnderstandingProvider).toHaveBeenCalledWith("deepgram", registry);
+    expect(transcribeAudio).toHaveBeenCalledWith({
+      buffer: Buffer.from("audio-bytes"),
+      fileName: "utterance.wav",
+      mime: "audio/wav",
+      apiKey: "test-key",
+      model: "nova-3",
+      language: "en",
+      baseUrl: "https://stt.example/v1",
+      headers: {
+        "X-Test": "1",
+      },
+      request: {
+        headers: {
+          "X-Request": "cfg",
+        },
+      },
+      query: {
+        punctuate: true,
+      },
+      timeoutMs: 30_000,
+    });
+  });
+
+  it("includes detectedLanguage when the provider returns it", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key", model: "nova-3" }));
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "deepgram",
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: "hello",
+        model: "nova-3",
+        detectedLanguage: "en",
+      }),
+    });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(true);
+    expect(error).toBeUndefined();
+    expect(result).toEqual({
+      text: "hello",
+      provider: "deepgram",
+      model: "nova-3",
+      detectedLanguage: "en",
+    });
   });
 });

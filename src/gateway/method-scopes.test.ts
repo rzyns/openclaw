@@ -30,6 +30,7 @@ describe("method scope resolution", () => {
     ["sessions.create", ["operator.write"]],
     ["sessions.send", ["operator.write"]],
     ["sessions.abort", ["operator.write"]],
+    ["talk.transcribe", ["operator.write"]],
     ["sessions.messages.subscribe", ["operator.read"]],
     ["sessions.messages.unsubscribe", ["operator.read"]],
     ["node.pair.approve", ["operator.pairing"]],

@@ -92,6 +92,7 @@ export type AudioTranscriptionRequest = {
 export type AudioTranscriptionResult = {
   text: string;
   model?: string;
+  detectedLanguage?: string;
 };
 
 export type VideoDescriptionRequest = {

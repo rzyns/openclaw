@@ -29,7 +29,9 @@ describe("transcribeDeepgramAudio", () => {
 
   it("builds the expected request payload", async () => {
     const { fetchFn, getRequest } = createRequestCaptureJsonFetch({
-      results: { channels: [{ alternatives: [{ transcript: "hello" }] }] },
+      results: {
+        channels: [{ detected_language: "pl", alternatives: [{ transcript: "hello" }] }],
+      },
     });
 
     const result = await transcribeDeepgramAudio({
@@ -52,6 +54,7 @@ describe("transcribeDeepgramAudio", () => {
 
     expect(result.model).toBe("nova-3");
     expect(result.text).toBe("hello");
+    expect(result.detectedLanguage).toBe("pl");
     expect(seenUrl).toBe(
       "https://api.example.com/v1/listen?model=nova-3&language=en&punctuate=false&smart_format=true",
     );

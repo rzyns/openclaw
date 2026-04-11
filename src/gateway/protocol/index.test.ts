@@ -1,7 +1,12 @@
 import type { ErrorObject } from "ajv";
 import { describe, expect, it } from "vitest";
 import { TALK_TEST_PROVIDER_ID } from "../../test-utils/talk-test-provider.js";
-import { formatValidationErrors, validateTalkConfigResult } from "./index.js";
+import {
+  formatValidationErrors,
+  validateTalkConfigResult,
+  validateTalkTranscribeParams,
+  validateTalkTranscribeResult,
+} from "./index.js";
 
 const makeError = (overrides: Partial<ErrorObject>): ErrorObject => ({
   keyword: "type",
@@ -61,6 +66,40 @@ describe("formatValidationErrors", () => {
     expect(formatValidationErrors([err, err])).toBe(
       "at /auth: must have required property 'token'",
     );
+  });
+});
+
+describe("validateTalkTranscribeParams", () => {
+  it("accepts valid talk.transcribe params", () => {
+    expect(
+      validateTalkTranscribeParams({
+        audioBase64: "YQ==",
+        mimeType: "audio/wav",
+        fileExtension: "wav",
+        language: "pl",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects empty audioBase64", () => {
+    expect(validateTalkTranscribeParams({ audioBase64: "" })).toBe(false);
+  });
+});
+
+describe("validateTalkTranscribeResult", () => {
+  it("accepts detectedLanguage on talk.transcribe responses", () => {
+    expect(
+      validateTalkTranscribeResult({
+        text: "dzień dobry",
+        provider: "openai",
+        model: "gpt-4o-mini-transcribe",
+        detectedLanguage: "pl",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects results without text", () => {
+    expect(validateTalkTranscribeResult({ provider: "openai" })).toBe(false);
   });
 });
 
