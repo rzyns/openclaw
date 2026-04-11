@@ -2413,6 +2413,58 @@ public struct TalkSpeakResult: Codable, Sendable {
     }
 }
 
+public struct TalkTranscribeParams: Codable, Sendable {
+    public let audiobase64: String
+    public let mimetype: String?
+    public let fileextension: String?
+    public let language: String?
+
+    public init(
+        audiobase64: String,
+        mimetype: String?,
+        fileextension: String?,
+        language: String?)
+    {
+        self.audiobase64 = audiobase64
+        self.mimetype = mimetype
+        self.fileextension = fileextension
+        self.language = language
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case audiobase64 = "audioBase64"
+        case mimetype = "mimeType"
+        case fileextension = "fileExtension"
+        case language
+    }
+}
+
+public struct TalkTranscribeResult: Codable, Sendable {
+    public let text: String
+    public let provider: String
+    public let model: String?
+    public let detectedlanguage: String?
+
+    public init(
+        text: String,
+        provider: String,
+        model: String?,
+        detectedlanguage: String?)
+    {
+        self.text = text
+        self.provider = provider
+        self.model = model
+        self.detectedlanguage = detectedlanguage
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case provider
+        case model
+        case detectedlanguage = "detectedLanguage"
+    }
+}
+
 public struct ChannelsStatusParams: Codable, Sendable {
     public let probe: Bool?
     public let timeoutms: Int?

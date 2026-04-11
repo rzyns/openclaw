@@ -20,8 +20,10 @@ function resolveModel(model?: string): string {
 type DeepgramTranscriptResponse = {
   results?: {
     channels?: Array<{
+      detected_language?: string;
       alternatives?: Array<{
         transcript?: string;
+        detected_language?: string;
       }>;
     }>;
   };
@@ -80,7 +82,11 @@ export async function transcribeDeepgramAudio(
       payload.results?.channels?.[0]?.alternatives?.[0]?.transcript,
       "Audio transcription response missing transcript",
     );
-    return { text: transcript, model };
+    const detectedLanguage =
+      payload.results?.channels?.[0]?.detected_language?.trim() ||
+      payload.results?.channels?.[0]?.alternatives?.[0]?.detected_language?.trim() ||
+      undefined;
+    return { text: transcript, model, ...(detectedLanguage ? { detectedLanguage } : {}) };
   } finally {
     await release();
   }

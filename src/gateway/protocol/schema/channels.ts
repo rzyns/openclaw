@@ -114,6 +114,26 @@ export const TalkSpeakResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TalkTranscribeParamsSchema = Type.Object(
+  {
+    audioBase64: NonEmptyString,
+    mimeType: Type.Optional(Type.String()),
+    fileExtension: Type.Optional(Type.String()),
+    language: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const TalkTranscribeResultSchema = Type.Object(
+  {
+    text: NonEmptyString,
+    provider: NonEmptyString,
+    model: Type.Optional(Type.String()),
+    detectedLanguage: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 export const ChannelsStatusParamsSchema = Type.Object(
   {
     probe: Type.Optional(Type.Boolean()),
