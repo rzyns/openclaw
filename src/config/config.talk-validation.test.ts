@@ -78,4 +78,40 @@ describe("talk config validation fail-closed behavior", () => {
       /talk\.provider|required/i,
     );
   });
+
+  it("rejects talk.sttProvider when it does not match talk.sttProviders during config load", async () => {
+    await expectInvalidTalkConfig(
+      {
+        agents: { list: [{ id: "main" }] },
+        talk: {
+          sttProvider: "acme",
+          sttProviders: {
+            openai: {
+              language: "pl",
+            },
+          },
+        },
+      },
+      /talk\.sttProvider|talk\.sttProviders|acme/i,
+    );
+  });
+
+  it("rejects multi-provider talk STT config without talk.sttProvider during config load", async () => {
+    await expectInvalidTalkConfig(
+      {
+        agents: { list: [{ id: "main" }] },
+        talk: {
+          sttProviders: {
+            acme: {
+              language: "pl",
+            },
+            openai: {
+              language: "en",
+            },
+          },
+        },
+      },
+      /talk\.sttProvider|required/i,
+    );
+  });
 });

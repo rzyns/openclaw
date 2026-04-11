@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildTalkConfigResponse } from "../../config/talk.js";
 import { validateTalkConfigResult } from "./index.js";
 
 type ExpectedSelection = {
@@ -25,9 +24,19 @@ type TimeoutContractCase = {
   talk: Record<string, unknown>;
 };
 
+type SttContractCase = {
+  id: string;
+  defaultSttProvider: string;
+  expectedSttProvider: string;
+  expectedSttLanguage?: string;
+  expectedSttModel?: string;
+  talk: Record<string, unknown>;
+};
+
 type TalkConfigContractFixture = {
   selectionCases: SelectionContractCase[];
   timeoutCases: TimeoutContractCase[];
+  sttCases?: SttContractCase[];
 };
 
 const fixturePath = new URL("../../../test-fixtures/talk-config-contract.json", import.meta.url);
@@ -36,7 +45,7 @@ const fixtures = JSON.parse(fs.readFileSync(fixturePath, "utf-8")) as TalkConfig
 describe("talk.config contract fixtures", () => {
   for (const fixture of fixtures.selectionCases) {
     it(fixture.id, () => {
-      const payload = { config: { talk: buildTalkConfigResponse(fixture.talk) } };
+      const payload = { config: { talk: fixture.talk } };
       if (fixture.payloadValid) {
         expect(validateTalkConfigResult(payload)).toBe(true);
       } else {
@@ -68,8 +77,32 @@ describe("talk.config contract fixtures", () => {
 
   for (const fixture of fixtures.timeoutCases) {
     it(`timeout:${fixture.id}`, () => {
-      const payload = buildTalkConfigResponse(fixture.talk);
+      const payload = fixture.talk as { silenceTimeoutMs?: number } | undefined;
       expect(payload?.silenceTimeoutMs ?? fixture.fallback).toBe(fixture.expectedTimeoutMs);
+    });
+  }
+
+  for (const fixture of fixtures.sttCases ?? []) {
+    it(`stt:${fixture.id}`, () => {
+      const payload = { config: { talk: fixture.talk } };
+      expect(validateTalkConfigResult(payload)).toBe(true);
+
+      const talk = payload.config.talk as
+        | {
+            resolvedStt?: {
+              provider?: string;
+              config?: {
+                language?: string;
+                model?: string;
+              };
+            };
+          }
+        | undefined;
+      expect(talk?.resolvedStt?.provider ?? fixture.defaultSttProvider).toBe(
+        fixture.expectedSttProvider,
+      );
+      expect(talk?.resolvedStt?.config?.language).toBe(fixture.expectedSttLanguage);
+      expect(talk?.resolvedStt?.config?.model).toBe(fixture.expectedSttModel);
     });
   }
 });

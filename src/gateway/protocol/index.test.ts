@@ -112,4 +112,21 @@ describe("validateTalkConfigResult", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects normalized STT payloads without talk.resolvedStt", () => {
+    expect(
+      validateTalkConfigResult({
+        config: {
+          talk: {
+            sttProvider: "openai",
+            sttProviders: {
+              openai: {
+                language: "pl",
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
 });

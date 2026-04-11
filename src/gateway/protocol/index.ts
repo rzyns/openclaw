@@ -421,7 +421,50 @@ export const validateWizardCancelParams = ajv.compile<WizardCancelParams>(Wizard
 export const validateWizardStatusParams = ajv.compile<WizardStatusParams>(WizardStatusParamsSchema);
 export const validateTalkModeParams = ajv.compile<TalkModeParams>(TalkModeParamsSchema);
 export const validateTalkConfigParams = ajv.compile<TalkConfigParams>(TalkConfigParamsSchema);
-export const validateTalkConfigResult = ajv.compile<TalkConfigResult>(TalkConfigResultSchema);
+const validateTalkConfigResultSchema = ajv.compile<TalkConfigResult>(TalkConfigResultSchema);
+
+export const validateTalkConfigResult = ((data: unknown): data is TalkConfigResult => {
+  const valid = validateTalkConfigResultSchema(data);
+  if (!valid) {
+    validateTalkConfigResult.errors = validateTalkConfigResultSchema.errors;
+    return false;
+  }
+
+  const talk = data.config.talk;
+  const hasNormalizedTts =
+    talk != null && (talk.provider !== undefined || talk.providers !== undefined);
+  if (hasNormalizedTts && talk?.resolved == null) {
+    validateTalkConfigResult.errors = [
+      {
+        instancePath: "/config/talk",
+        schemaPath: "#/config/talk/resolved",
+        keyword: "required",
+        params: { missingProperty: "resolved" },
+        message: 'must have required property "resolved" when talk.provider/providers are present',
+      },
+    ];
+    return false;
+  }
+
+  const hasNormalizedStt =
+    talk != null && (talk.sttProvider !== undefined || talk.sttProviders !== undefined);
+  if (hasNormalizedStt && talk?.resolvedStt == null) {
+    validateTalkConfigResult.errors = [
+      {
+        instancePath: "/config/talk",
+        schemaPath: "#/config/talk/resolvedStt",
+        keyword: "required",
+        params: { missingProperty: "resolvedStt" },
+        message:
+          'must have required property "resolvedStt" when talk.sttProvider/sttProviders are present',
+      },
+    ];
+    return false;
+  }
+
+  validateTalkConfigResult.errors = null;
+  return true;
+}) as typeof validateTalkConfigResultSchema;
 export const validateTalkSpeakParams = ajv.compile<TalkSpeakParams>(TalkSpeakParamsSchema);
 export const validateTalkSpeakResult = ajv.compile<TalkSpeakResult>(TalkSpeakResultSchema);
 export const validateChannelsStatusParams = ajv.compile<ChannelsStatusParams>(
