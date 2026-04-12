@@ -16,9 +16,13 @@ struct TalkModeGatewayConfigState {
     let activeSttProvider: String
     let sttLanguage: String?
     let sttModel: String?
+    let sttBackend: TalkSpeechBackendConfiguration
 }
 
 enum TalkModeGatewayConfigParser {
+    private static let appleSttProviderAliases: Set<String> = ["apple", "ios", "system"]
+    private static let gatewaySttProviderAliases: Set<String> = ["gateway"]
+
     static func parse(
         config: [String: Any],
         defaultProvider: String,
@@ -68,9 +72,14 @@ enum TalkModeGatewayConfigParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let sttModel = sttConfig?["model"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let activeSttProvider = sttSelection?.provider
-            ?? talk?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? defaultSttProvider
+        let configuredSttProviderID = self.normalizedProviderID(
+            sttSelection?.provider
+                ?? talk?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines))
+        let activeSttProvider = configuredSttProviderID ?? defaultSttProvider
+        let sttBackend = self.resolveSttBackend(
+            configuredProviderID: configuredSttProviderID,
+            language: sttLanguage,
+            model: sttModel)
 
         return TalkModeGatewayConfigState(
             activeProvider: activeProvider,
@@ -85,6 +94,34 @@ enum TalkModeGatewayConfigParser {
             silenceTimeoutMs: silenceTimeoutMs,
             activeSttProvider: activeSttProvider,
             sttLanguage: sttLanguage,
-            sttModel: sttModel)
+            sttModel: sttModel,
+            sttBackend: sttBackend)
+    }
+
+    private static func normalizedProviderID(_ raw: String?) -> String? {
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func resolveSttBackend(
+        configuredProviderID: String?,
+        language: String?,
+        model: String?
+    ) -> TalkSpeechBackendConfiguration {
+        guard let providerID = configuredProviderID else { return .appleDefault }
+        let kind: TalkSpeechBackendKind
+        if self.gatewaySttProviderAliases.contains(providerID) {
+            kind = .gateway
+        } else {
+            kind = .apple
+        }
+        let normalizedProviderID = self.appleSttProviderAliases.contains(providerID)
+            ? "apple"
+            : providerID
+        return TalkSpeechBackendConfiguration(
+            kind: kind,
+            configuredProviderID: normalizedProviderID,
+            language: language,
+            model: model)
     }
 }

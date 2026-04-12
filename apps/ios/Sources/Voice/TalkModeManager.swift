@@ -24,6 +24,7 @@ private final class StreamFailureBox: @unchecked Sendable {
     }
 }
 
+
 // This file intentionally centralizes talk mode state + behavior.
 // It's large, and splitting would force `private` -> `fileprivate` across many members.
 // We'll refactor into smaller files when the surface stabilizes.
@@ -31,7 +32,6 @@ private final class StreamFailureBox: @unchecked Sendable {
 @MainActor
 @Observable
 final class TalkModeManager: NSObject {
-    private typealias SpeechRequest = SFSpeechAudioBufferRecognitionRequest
     private static let defaultModelIdFallback = "eleven_v3"
     private static let defaultTalkProvider = "elevenlabs"
     private static let defaultTalkSttProvider = "openai"
@@ -67,9 +67,8 @@ final class TalkModeManager: NSObject {
     private let audioEngine = AVAudioEngine()
     private var inputTapInstalled = false
     private var audioTapDiagnostics: AudioTapDiagnostics?
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
+    private var speechBackendConfiguration: TalkSpeechBackendConfiguration = .appleDefault
+    private var speechBackend: (any TalkSpeechBackend)?
     private var silenceTask: Task<Void, Never>?
 
     private var lastHeard: Date?
@@ -122,6 +121,63 @@ final class TalkModeManager: NSObject {
     init(allowSimulatorCapture: Bool = false) {
         self.allowSimulatorCapture = allowSimulatorCapture
         super.init()
+    }
+
+    private func updateSpeechBackendConfiguration(_ configuration: TalkSpeechBackendConfiguration) {
+        guard self.speechBackendConfiguration != configuration else { return }
+        self.stopRecognition()
+        self.speechBackendConfiguration = configuration
+        self.speechBackend = nil
+    }
+
+    private func resolvedSpeechBackend() -> any TalkSpeechBackend {
+        if let speechBackend {
+            return speechBackend
+        }
+        let speechBackend = TalkSpeechBackendFactory.make(for: self.speechBackendConfiguration)
+        self.speechBackend = speechBackend
+        return speechBackend
+    }
+
+    private func handleSpeechBackendEvent(_ event: TalkSpeechBackendEvent) async {
+        switch event {
+        case let .transcript(result):
+            if !result.isFinal, !self.loggedPartialThisCycle {
+                let trimmed = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    self.loggedPartialThisCycle = true
+                    GatewayDiagnostics.log("talk speech: partial chars=\(trimmed.count)")
+                }
+            }
+            await self.handleTranscript(transcript: result.transcript, isFinal: result.isFinal)
+        case let .failure(message, isCancellation):
+            await self.handleSpeechRecognitionFailure(message: message, isCancellation: isCancellation)
+        }
+    }
+
+    private func handleSpeechRecognitionFailure(message: String, isCancellation: Bool) async {
+        if isCancellation {
+            GatewayDiagnostics.log("talk speech: cancelled")
+            if self.captureMode == .continuous, self.isEnabled, !self.isSpeaking {
+                self.statusText = "Listening"
+            }
+            self.logger.debug("speech recognition cancelled")
+            return
+        }
+
+        GatewayDiagnostics.log("talk speech: error=\(message)")
+        if !self.isSpeaking {
+            if message.localizedCaseInsensitiveContains("no speech detected") {
+                self.statusText = self.isEnabled ? "Listening" : "Speech error: \(message)"
+            } else {
+                self.statusText = "Speech error: \(message)"
+            }
+        }
+        self.logger.debug("speech recognition error: \(message, privacy: .public)")
+        if self.captureMode == .continuous, self.isEnabled, !self.isSpeaking {
+            self.stopRecognition()
+            await self.restartRecognitionAfterError()
+        }
     }
 
     func attachGateway(_ gateway: GatewayNodeSession) {
@@ -489,8 +545,7 @@ final class TalkModeManager: NSObject {
     private func startRecognition() throws {
         #if targetEnvironment(simulator)
             if self.allowSimulatorCapture {
-                self.recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-                self.recognitionRequest?.shouldReportPartialResults = true
+                self.loggedPartialThisCycle = false
                 return
             }
             if !self.allowSimulatorCapture {
@@ -501,18 +556,6 @@ final class TalkModeManager: NSObject {
         #endif
 
         self.stopRecognition()
-        self.speechRecognizer = SFSpeechRecognizer()
-        guard let recognizer = self.speechRecognizer else {
-            throw NSError(domain: "TalkMode", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Speech recognizer unavailable",
-            ])
-        }
-
-        self.recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        self.recognitionRequest?.shouldReportPartialResults = true
-        self.recognitionRequest?.taskHint = .dictation
-        guard let request = self.recognitionRequest else { return }
-
         GatewayDiagnostics.log("talk audio: session \(Self.describeAudioSession())")
 
         let input = self.audioEngine.inputNode
@@ -522,16 +565,14 @@ final class TalkModeManager: NSObject {
                 NSLocalizedDescriptionKey: "Invalid audio input format",
             ])
         }
-        input.removeTap(onBus: 0)
+
         let tapDiagnostics = AudioTapDiagnostics(label: "talk") { [weak self] level in
             guard let self else { return }
             Task { @MainActor in
-                // Smooth + clamp for UI, and keep it cheap.
                 let raw = max(0, min(Double(level) * 10.0, 1.0))
                 let next = (self.micLevel * 0.80) + (raw * 0.20)
                 self.micLevel = next
 
-                // Dynamic thresholding so background noise doesn’t prevent endpointing.
                 if self.isListening, !self.isSpeaking, !self.noiseFloorReady {
                     self.noiseFloorSamples.append(raw)
                     if self.noiseFloorSamples.count >= 22 {
@@ -561,71 +602,38 @@ final class TalkModeManager: NSObject {
             }
         }
         self.audioTapDiagnostics = tapDiagnostics
-        let tapBlock = Self.makeAudioTapAppendCallback(request: request, diagnostics: tapDiagnostics)
-        input.installTap(onBus: 0, bufferSize: 2048, format: format, block: tapBlock)
-        self.inputTapInstalled = true
 
-        self.audioEngine.prepare()
-        try self.audioEngine.start()
-        self.loggedPartialThisCycle = false
+        let speechBackend = self.resolvedSpeechBackend()
+        do {
+            try speechBackend.startRecognition { [weak self] event in
+                guard self != nil else { return }
+                Task { @MainActor [weak self] in
+                    await self?.handleSpeechBackendEvent(event)
+                }
+            }
 
-        GatewayDiagnostics.log(
-            "talk speech: recognition started mode=\(String(describing: self.captureMode)) "
-                + "engineRunning=\(self.audioEngine.isRunning)"
-        )
-        self.recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
-            if let error {
-                let msg = error.localizedDescription
-                let lowered = msg.lowercased()
-                let isCancellation = lowered.contains("cancelled") || lowered.contains("canceled")
-                if isCancellation {
-                    GatewayDiagnostics.log("talk speech: cancelled")
-                    if self.captureMode == .continuous, self.isEnabled, !self.isSpeaking {
-                        self.statusText = "Listening"
-                    }
-                    self.logger.debug("speech recognition cancelled")
-                    return
-                }
-                GatewayDiagnostics.log("talk speech: error=\(msg)")
-                if !self.isSpeaking {
-                    if msg.localizedCaseInsensitiveContains("no speech detected") {
-                        // Treat as transient silence. Don't scare users with an error banner.
-                        self.statusText = self.isEnabled ? "Listening" : "Speech error: \(msg)"
-                    } else {
-                        self.statusText = "Speech error: \(msg)"
-                    }
-                }
-                self.logger.debug("speech recognition error: \(msg, privacy: .public)")
-                // Speech recognition can terminate on transient errors (e.g. no speech detected).
-                // If talk mode is enabled and we're in continuous capture, try to restart.
-                if self.captureMode == .continuous, self.isEnabled, !self.isSpeaking {
-                    // Treat the task as terminal on error so we don't get stuck with a dead recognizer.
-                    self.stopRecognition()
-                    Task { @MainActor [weak self] in
-                        await self?.restartRecognitionAfterError()
-                    }
-                }
-            }
-            guard let result else { return }
-            let transcript = result.bestTranscription.formattedString
-            if !result.isFinal, !self.loggedPartialThisCycle {
-                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    self.loggedPartialThisCycle = true
-                    GatewayDiagnostics.log("talk speech: partial chars=\(trimmed.count)")
-                }
-            }
-            Task { @MainActor in
-                await self.handleTranscript(transcript: transcript, isFinal: result.isFinal)
-            }
+            input.removeTap(onBus: 0)
+            let tapBlock = Self.makeAudioTapAppendCallback(backend: speechBackend, diagnostics: tapDiagnostics)
+            input.installTap(onBus: 0, bufferSize: 2048, format: format, block: tapBlock)
+            self.inputTapInstalled = true
+
+            self.audioEngine.prepare()
+            try self.audioEngine.start()
+            self.loggedPartialThisCycle = false
+
+            GatewayDiagnostics.log(
+                "talk speech: recognition started mode=\(String(describing: self.captureMode)) "
+                    + "engineRunning=\(self.audioEngine.isRunning) backend=\(speechBackend.kind.rawValue)"
+            )
+        } catch {
+            self.stopRecognition()
+            throw error
         }
     }
 
     private func restartRecognitionAfterError() async {
         guard self.isEnabled, self.captureMode == .continuous else { return }
-        // Avoid thrashing the audio engine if it’s already running.
-        if self.recognitionTask != nil, self.audioEngine.isRunning { return }
+        if self.speechBackend?.isRunning == true, self.audioEngine.isRunning { return }
         try? await Task.sleep(nanoseconds: 250_000_000)
         guard self.isEnabled, self.captureMode == .continuous else { return }
         do {
@@ -643,10 +651,7 @@ final class TalkModeManager: NSObject {
     }
 
     private func stopRecognition() {
-        self.recognitionTask?.cancel()
-        self.recognitionTask = nil
-        self.recognitionRequest?.endAudio()
-        self.recognitionRequest = nil
+        self.speechBackend?.stopRecognition()
         self.micLevel = 0
         self.lastAudioActivity = nil
         self.noiseFloorSamples.removeAll(keepingCapacity: true)
@@ -658,15 +663,14 @@ final class TalkModeManager: NSObject {
             self.inputTapInstalled = false
         }
         self.audioEngine.stop()
-        self.speechRecognizer = nil
     }
 
     private nonisolated static func makeAudioTapAppendCallback(
-        request: SpeechRequest,
+        backend: any TalkSpeechBackend,
         diagnostics: AudioTapDiagnostics) -> AVAudioNodeTapBlock
     {
         { buffer, _ in
-            request.append(buffer)
+            backend.appendAudioBuffer(buffer)
             diagnostics.onBuffer(buffer)
         }
     }
@@ -2022,13 +2026,16 @@ extension TalkModeManager {
             self.gatewayTalkDefaultModelId = self.defaultModelId
             self.gatewayTalkApiKeyConfigured = (self.apiKey?.isEmpty == false)
             self.gatewayTalkConfigLoaded = true
+            self.updateSpeechBackendConfiguration(parsed.sttBackend)
             if let interrupt = parsed.interruptOnSpeech {
                 self.interruptOnSpeech = interrupt
             }
             self.silenceWindow = TimeInterval(parsed.silenceTimeoutMs) / 1000
             if parsed.normalizedPayload || parsed.defaultVoiceId != nil || parsed.rawConfigApiKey != nil {
                 GatewayDiagnostics.log(
-                    "talk config provider=\(activeProvider) silenceTimeoutMs=\(parsed.silenceTimeoutMs)")
+                    "talk config provider=\(activeProvider) sttProvider=\(parsed.activeSttProvider) "
+                        + "sttBackend=\(parsed.sttBackend.kind.rawValue) "
+                        + "silenceTimeoutMs=\(parsed.silenceTimeoutMs)")
             }
         } catch {
             self.defaultModelId = Self.defaultModelIdFallback
@@ -2039,6 +2046,7 @@ extension TalkModeManager {
             self.gatewayTalkDefaultModelId = nil
             self.gatewayTalkApiKeyConfigured = false
             self.gatewayTalkConfigLoaded = false
+            self.updateSpeechBackendConfiguration(.appleDefault)
             self.silenceWindow = TimeInterval(Self.defaultSilenceTimeoutMs) / 1000
         }
     }
@@ -2146,6 +2154,12 @@ private final class AudioTapDiagnostics: @unchecked Sendable {
 extension TalkModeManager {
     static func _test_isPCMFormatRejectedByAPI(_ error: Error?) -> Bool {
         self.isPCMFormatRejectedByAPI(error)
+    }
+
+    static func _test_speechBackendTypeName(
+        for configuration: TalkSpeechBackendConfiguration
+    ) -> String {
+        String(describing: type(of: TalkSpeechBackendFactory.make(for: configuration)))
     }
 
     func _test_seedTranscript(_ transcript: String) {
