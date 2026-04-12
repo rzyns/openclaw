@@ -69,6 +69,16 @@ final class TalkModeManager: NSObject {
     private var audioTapDiagnostics: AudioTapDiagnostics?
     private var speechBackendConfiguration: TalkSpeechBackendConfiguration = .appleDefault
     private var speechBackend: (any TalkSpeechBackend)?
+
+    private enum SpeechStatusState: String {
+        case activeApple = "active_apple"
+        case activeGateway = "active_gateway"
+        case gatewayFallback = "gateway_fallback"
+        case gatewayUnavailable = "gateway_unavailable"
+        case gatewayError = "gateway_error"
+    }
+
+    private var speechStatusState: SpeechStatusState = .activeApple
     private var silenceTask: Task<Void, Never>?
 
     private var lastHeard: Date?
@@ -127,6 +137,7 @@ final class TalkModeManager: NSObject {
         guard self.speechBackendConfiguration != configuration else { return }
         self.stopRecognition()
         self.speechBackendConfiguration = configuration
+        self.syncSpeechStatusStateToConfiguration()
         self.speechBackend = nil
     }
 
@@ -137,6 +148,109 @@ final class TalkModeManager: NSObject {
         let speechBackend = TalkSpeechBackendFactory.make(for: self.speechBackendConfiguration)
         self.speechBackend = speechBackend
         return speechBackend
+    }
+
+    private func syncSpeechStatusStateToConfiguration() {
+        switch self.speechBackendConfiguration.kind {
+        case .apple:
+            self.speechStatusState = .activeApple
+        case .gateway:
+            if self.speechStatusState == .activeApple {
+                self.speechStatusState = .activeGateway
+            }
+        }
+    }
+
+    private var currentSpeechStatusLabel: String {
+        Self.speechStatusLabel(for: self.speechStatusState)
+    }
+
+    private func applyListeningStatus() {
+        self.statusText = Self.listeningStatusText(
+            captureMode: self.captureMode,
+            speechStatusState: self.speechStatusState)
+    }
+
+    private func noteSpeechRecognitionActive() {
+        self.syncSpeechStatusStateToConfiguration()
+    }
+
+    private func noteGatewaySpeechFallback(reason: String) {
+        self.speechStatusState = .gatewayFallback
+        GatewayDiagnostics.log("talk speech: gateway fallback reason=\(reason)")
+    }
+
+    private func noteGatewaySpeechUnavailable(reason: String) {
+        self.speechStatusState = .gatewayUnavailable
+        GatewayDiagnostics.log("talk speech: gateway unavailable \(reason)")
+    }
+
+    private func noteGatewaySpeechError(reason: String) {
+        self.speechStatusState = .gatewayError
+        GatewayDiagnostics.log("talk speech: gateway error \(reason)")
+    }
+
+    private func speechRecognitionStatusText(for configuration: TalkSpeechBackendConfiguration) -> String {
+        configuration.usesUtteranceBoundaryFinalization ? "Transcribing (Gateway STT)…" : "Thinking…"
+    }
+
+    private func readyStatusTextForCurrentSpeechState() -> String {
+        Self.readyStatusText(for: self.speechStatusState)
+    }
+
+    private func speechBackendDiagnosticsDescription(for configuration: TalkSpeechBackendConfiguration) -> String {
+        var components = ["backend=\(configuration.kind.rawValue)"]
+        let provider = configuration.configuredProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let provider, !provider.isEmpty {
+            components.append("provider=\(provider)")
+        }
+        let language = configuration.language?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let language, !language.isEmpty {
+            components.append("language=\(language)")
+        }
+        let model = configuration.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let model, !model.isEmpty {
+            components.append("model=\(model)")
+        }
+        return components.joined(separator: " ")
+    }
+
+    private static func speechStatusLabel(for state: SpeechStatusState) -> String {
+        switch state {
+        case .activeApple:
+            return "Apple STT"
+        case .activeGateway:
+            return "Gateway STT"
+        case .gatewayFallback:
+            return "Gateway STT fallback"
+        case .gatewayUnavailable:
+            return "Gateway STT unavailable"
+        case .gatewayError:
+            return "Gateway STT error"
+        }
+    }
+
+    private static func listeningStatusText(
+        captureMode: CaptureMode,
+        speechStatusState: SpeechStatusState
+    ) -> String {
+        var components: [String] = []
+        if captureMode == .pushToTalk {
+            components.append("PTT")
+        }
+        components.append(self.speechStatusLabel(for: speechStatusState))
+        return "Listening (\(components.joined(separator: ", ")))"
+    }
+
+    private static func readyStatusText(for speechStatusState: SpeechStatusState) -> String {
+        switch speechStatusState {
+        case .gatewayUnavailable:
+            return "Gateway STT unavailable"
+        case .gatewayError:
+            return "Gateway STT error"
+        default:
+            return "Ready"
+        }
     }
 
     private func handleSpeechBackendEvent(_ event: TalkSpeechBackendEvent) async {
@@ -159,7 +273,7 @@ final class TalkModeManager: NSObject {
         if isCancellation {
             GatewayDiagnostics.log("talk speech: cancelled")
             if self.captureMode == .continuous, self.isEnabled, !self.isSpeaking {
-                self.statusText = "Listening"
+                self.applyListeningStatus()
             }
             self.logger.debug("speech recognition cancelled")
             return
@@ -168,7 +282,11 @@ final class TalkModeManager: NSObject {
         GatewayDiagnostics.log("talk speech: error=\(message)")
         if !self.isSpeaking {
             if message.localizedCaseInsensitiveContains("no speech detected") {
-                self.statusText = self.isEnabled ? "Listening" : "Speech error: \(message)"
+                if self.isEnabled {
+                    self.applyListeningStatus()
+                } else {
+                    self.statusText = "Speech error: \(message)"
+                }
             } else {
                 self.statusText = "Speech error: \(message)"
             }
@@ -253,7 +371,8 @@ final class TalkModeManager: NSObject {
             self.captureMode = .continuous
             try self.startRecognition()
             self.isListening = true
-            self.statusText = "Listening"
+            self.noteSpeechRecognitionActive()
+            self.applyListeningStatus()
             self.startSilenceMonitor()
             await self.subscribeChatIfNeeded(sessionKey: self.mainSessionKey)
             self.logger.info("listening")
@@ -398,7 +517,8 @@ final class TalkModeManager: NSObject {
             try self.startRecognition()
             self.isListening = true
             self.isPushToTalkActive = true
-            self.statusText = "Listening (PTT)"
+            self.noteSpeechRecognitionActive()
+            self.applyListeningStatus()
         } catch {
             self.isListening = false
             self.isPushToTalkActive = false
@@ -436,7 +556,7 @@ final class TalkModeManager: NSObject {
         self.lastHeard = nil
 
         guard !transcript.isEmpty || hasBufferedUtteranceAudio else {
-            self.statusText = "Ready"
+            self.statusText = self.readyStatusTextForCurrentSpeechState()
             if self.resumeContinuousAfterPTT {
                 await self.start()
             }
@@ -623,9 +743,12 @@ final class TalkModeManager: NSObject {
             try self.audioEngine.start()
             self.loggedPartialThisCycle = false
 
+            self.noteSpeechRecognitionActive()
+            let backendDescription = self.speechBackendDiagnosticsDescription(for: self.speechBackendConfiguration)
             GatewayDiagnostics.log(
                 "talk speech: recognition started mode=\(String(describing: self.captureMode)) "
-                    + "engineRunning=\(self.audioEngine.isRunning) backend=\(speechBackend.kind.rawValue)"
+                    + "engineRunning=\(self.audioEngine.isRunning) \(backendDescription) "
+                    + "state=\(self.speechStatusState.rawValue) label=\(self.currentSpeechStatusLabel)"
             )
         } catch {
             self.stopRecognition()
@@ -642,9 +765,8 @@ final class TalkModeManager: NSObject {
             try Self.configureAudioSession()
             try self.startRecognition()
             self.isListening = true
-            if self.statusText.localizedCaseInsensitiveContains("speech error") {
-                self.statusText = "Listening"
-            }
+            self.noteSpeechRecognitionActive()
+            self.applyListeningStatus()
             GatewayDiagnostics.log("talk speech: recognition restarted")
         } catch {
             let msg = error.localizedDescription
@@ -776,7 +898,7 @@ final class TalkModeManager: NSObject {
 
         self.isListening = false
         self.captureMode = .idle
-        self.statusText = "Thinking…"
+        self.statusText = self.speechRecognitionStatusText(for: backendConfiguration)
         self.lastTranscript = ""
         self.lastHeard = nil
         self.stopRecognition()
@@ -788,13 +910,15 @@ final class TalkModeManager: NSObject {
             backendConfiguration: backendConfiguration,
             bufferedUtterance: bufferedUtterance)
         else {
-            self.statusText = restartAfter ? "Listening" : "Ready"
             if restartAfter {
                 await self.start()
+            } else {
+                self.statusText = self.readyStatusTextForCurrentSpeechState()
             }
             return
         }
 
+        self.statusText = "Thinking…"
         let prompt = self.buildPrompt(transcript: finalTranscript)
         guard self.gatewayConnected, let gateway else {
             self.statusText = "Gateway not connected"
@@ -922,21 +1046,31 @@ final class TalkModeManager: NSObject {
     {
         let fallback = fallbackTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard backendConfiguration.usesUtteranceBoundaryFinalization else {
+            self.noteSpeechRecognitionActive()
             return fallback.isEmpty ? nil : fallback
         }
 
         guard let bufferedUtterance else {
+            let reason = "buffered utterance clip unavailable"
             if !fallback.isEmpty {
+                self.noteGatewaySpeechFallback(reason: reason)
                 GatewayDiagnostics.log(
                     "talk speech: gateway clip unavailable, using Apple fallback chars=\(fallback.count)")
+            } else {
+                self.noteGatewaySpeechUnavailable(reason: reason)
+                GatewayDiagnostics.log("talk speech: gateway clip unavailable and Apple fallback transcript empty")
             }
             return fallback.isEmpty ? nil : fallback
         }
 
         guard self.gatewayConnected, let gateway else {
+            let reason = "connected=\(self.gatewayConnected) sessionAttached=\(self.gateway != nil)"
+            self.noteGatewaySpeechUnavailable(reason: reason)
             if !fallback.isEmpty {
                 GatewayDiagnostics.log(
                     "talk speech: gateway unavailable, using Apple fallback chars=\(fallback.count)")
+            } else {
+                GatewayDiagnostics.log("talk speech: gateway unavailable and Apple fallback transcript empty")
             }
             return fallback.isEmpty ? nil : fallback
         }
@@ -948,22 +1082,43 @@ final class TalkModeManager: NSObject {
                 language: backendConfiguration.language)
             let transcript = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !transcript.isEmpty {
+                self.speechStatusState = .activeGateway
                 let provider = response.provider.trimmingCharacters(in: .whitespacesAndNewlines)
                 let model = response.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let detectedLanguage = response.detectedLanguage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let providerSuffix = provider.isEmpty ? "" : " provider=\(provider)"
                 let modelSuffix = model.isEmpty ? "" : " model=\(model)"
+                let languageSuffix = detectedLanguage.isEmpty ? "" : " language=\(detectedLanguage)"
                 GatewayDiagnostics.log(
-                    "talk speech: gateway transcript chars=\(transcript.count)\(providerSuffix)\(modelSuffix)")
+                    "talk speech: gateway transcript chars=\(transcript.count)"
+                        + "\(providerSuffix)\(modelSuffix)\(languageSuffix)")
                 return transcript
+            }
+
+            let reason = "empty transcript from talk.transcribe response"
+            if !fallback.isEmpty {
+                self.noteGatewaySpeechFallback(reason: reason)
+                GatewayDiagnostics.log(
+                    "talk speech: gateway transcript empty, using Apple fallback chars=\(fallback.count)")
+            } else {
+                self.noteGatewaySpeechError(reason: reason)
+                GatewayDiagnostics.log("talk speech: gateway transcript empty and Apple fallback transcript empty")
             }
         } catch {
             let message = error.localizedDescription
             self.logger.warning("gateway talk.transcribe failed: \(message, privacy: .public)")
-            GatewayDiagnostics.log("talk speech: gateway transcribe failed error=\(message)")
+            if !fallback.isEmpty {
+                self.noteGatewaySpeechFallback(reason: "talk.transcribe failed error=\(message)")
+            } else {
+                self.noteGatewaySpeechError(reason: "talk.transcribe failed error=\(message)")
+            }
+            GatewayDiagnostics.log(
+                "talk speech: gateway transcribe failed error=\(message)")
         }
 
         if !fallback.isEmpty {
-            GatewayDiagnostics.log("talk speech: using Apple fallback transcript chars=\(fallback.count)")
+            GatewayDiagnostics.log(
+                "talk speech: using Apple fallback transcript chars=\(fallback.count)")
         }
         return fallback.isEmpty ? nil : fallback
     }
@@ -990,7 +1145,15 @@ final class TalkModeManager: NSObject {
                 userInfo: [NSLocalizedDescriptionKey: "Failed to encode talk.transcribe payload"])
         }
 
-        GatewayDiagnostics.log("talk speech: gateway transcribe start bytes=\(bufferedUtterance.data.count)")
+        let normalizedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let languageSuffix: String
+        if let normalizedLanguage, !normalizedLanguage.isEmpty {
+            languageSuffix = " language=\(normalizedLanguage)"
+        } else {
+            languageSuffix = ""
+        }
+        GatewayDiagnostics.log(
+            "talk speech: gateway transcribe start bytes=\(bufferedUtterance.data.count)\(languageSuffix)")
         let response = try await gateway.request(method: "talk.transcribe", paramsJSON: json, timeoutSeconds: 45)
         return try JSONDecoder().decode(TalkTranscribeResponse.self, from: response)
     }
@@ -2272,6 +2435,19 @@ extension TalkModeManager {
         for configuration: TalkSpeechBackendConfiguration
     ) -> String {
         String(describing: type(of: TalkSpeechBackendFactory.make(for: configuration)))
+    }
+
+    static func _test_listeningStatusText(captureMode: String, speechState: String) -> String {
+        let resolvedCaptureMode: CaptureMode = captureMode == "pushToTalk" ? .pushToTalk : .continuous
+        let resolvedState = SpeechStatusState(rawValue: speechState) ?? .activeApple
+        return self.listeningStatusText(
+            captureMode: resolvedCaptureMode,
+            speechStatusState: resolvedState)
+    }
+
+    static func _test_readyStatusText(speechState: String) -> String {
+        let resolvedState = SpeechStatusState(rawValue: speechState) ?? .activeApple
+        return self.readyStatusText(for: resolvedState)
     }
 
     func _test_seedTranscript(_ transcript: String) {
