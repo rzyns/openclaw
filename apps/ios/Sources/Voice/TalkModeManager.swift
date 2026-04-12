@@ -430,10 +430,12 @@ final class TalkModeManager: NSObject {
         self.pttAutoStopEnabled = false
 
         let transcript = self.lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasBufferedUtteranceAudio = self.speechBackendConfiguration.usesUtteranceBoundaryFinalization &&
+            (self.speechBackend?.hasBufferedUtteranceAudio ?? false)
         self.lastTranscript = ""
         self.lastHeard = nil
 
-        guard !transcript.isEmpty else {
+        guard !transcript.isEmpty || hasBufferedUtteranceAudio else {
             self.statusText = "Ready"
             if self.resumeContinuousAfterPTT {
                 await self.start()
@@ -692,9 +694,14 @@ final class TalkModeManager: NSObject {
         }
         if isFinal {
             self.lastTranscript = trimmed
-            guard !trimmed.isEmpty else { return }
-            GatewayDiagnostics.log("talk speech: final transcript chars=\(trimmed.count)")
             self.loggedPartialThisCycle = false
+            if !trimmed.isEmpty {
+                GatewayDiagnostics.log("talk speech: final transcript chars=\(trimmed.count)")
+            }
+            if self.speechBackendConfiguration.usesUtteranceBoundaryFinalization {
+                return
+            }
+            guard !trimmed.isEmpty else { return }
             if self.captureMode == .pushToTalk, self.pttAutoStopEnabled, self.isPushToTalkActive {
                 _ = await self.endPushToTalk()
                 return
@@ -731,7 +738,9 @@ final class TalkModeManager: NSObject {
         guard self.captureMode == .pushToTalk, self.pttAutoStopEnabled else { return }
         guard self.isListening, !self.isSpeaking, self.isPushToTalkActive else { return }
         let transcript = self.lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else { return }
+        let hasBufferedUtteranceAudio = self.speechBackendConfiguration.usesUtteranceBoundaryFinalization &&
+            (self.speechBackend?.hasBufferedUtteranceAudio ?? false)
+        guard !transcript.isEmpty || hasBufferedUtteranceAudio else { return }
         let lastActivity = [self.lastHeard, self.lastAudioActivity].compactMap { $0 }.max()
         guard let lastActivity else { return }
         if Date().timeIntervalSince(lastActivity) < self.silenceWindow { return }
@@ -761,6 +770,10 @@ final class TalkModeManager: NSObject {
     }
 
     private func processTranscript(_ transcript: String, restartAfter: Bool) async {
+        let inputTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let backendConfiguration = self.speechBackendConfiguration
+        let bufferedUtterance = self.speechBackend?.takeBufferedUtteranceAudio()
+
         self.isListening = false
         self.captureMode = .idle
         self.statusText = "Thinking…"
@@ -768,9 +781,21 @@ final class TalkModeManager: NSObject {
         self.lastHeard = nil
         self.stopRecognition()
 
-        GatewayDiagnostics.log("talk: process transcript chars=\(transcript.count) restartAfter=\(restartAfter)")
+        GatewayDiagnostics.log("talk: process transcript chars=\(inputTranscript.count) restartAfter=\(restartAfter)")
         await self.reloadConfig()
-        let prompt = self.buildPrompt(transcript: transcript)
+        guard let finalTranscript = await self.resolveFinalTranscript(
+            fallbackTranscript: inputTranscript,
+            backendConfiguration: backendConfiguration,
+            bufferedUtterance: bufferedUtterance)
+        else {
+            self.statusText = restartAfter ? "Listening" : "Ready"
+            if restartAfter {
+                await self.start()
+            }
+            return
+        }
+
+        let prompt = self.buildPrompt(transcript: finalTranscript)
         guard self.gatewayConnected, let gateway else {
             self.statusText = "Gateway not connected"
             self.logger.warning("finalize: gateway not connected")
@@ -881,6 +906,93 @@ final class TalkModeManager: NSObject {
             transcript: transcript,
             interruptedAtSeconds: interrupted,
             includeVoiceDirectiveHint: false)
+    }
+
+    private struct TalkTranscribeResponse: Decodable {
+        let text: String
+        let provider: String
+        let model: String?
+        let detectedLanguage: String?
+    }
+
+    private func resolveFinalTranscript(
+        fallbackTranscript: String,
+        backendConfiguration: TalkSpeechBackendConfiguration,
+        bufferedUtterance: TalkSpeechBackendAudioClip?) async -> String?
+    {
+        let fallback = fallbackTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard backendConfiguration.usesUtteranceBoundaryFinalization else {
+            return fallback.isEmpty ? nil : fallback
+        }
+
+        guard let bufferedUtterance else {
+            if !fallback.isEmpty {
+                GatewayDiagnostics.log(
+                    "talk speech: gateway clip unavailable, using Apple fallback chars=\(fallback.count)")
+            }
+            return fallback.isEmpty ? nil : fallback
+        }
+
+        guard self.gatewayConnected, let gateway else {
+            if !fallback.isEmpty {
+                GatewayDiagnostics.log(
+                    "talk speech: gateway unavailable, using Apple fallback chars=\(fallback.count)")
+            }
+            return fallback.isEmpty ? nil : fallback
+        }
+
+        do {
+            let response = try await self.transcribeBufferedUtterance(
+                bufferedUtterance,
+                gateway: gateway,
+                language: backendConfiguration.language)
+            let transcript = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !transcript.isEmpty {
+                let provider = response.provider.trimmingCharacters(in: .whitespacesAndNewlines)
+                let model = response.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let providerSuffix = provider.isEmpty ? "" : " provider=\(provider)"
+                let modelSuffix = model.isEmpty ? "" : " model=\(model)"
+                GatewayDiagnostics.log(
+                    "talk speech: gateway transcript chars=\(transcript.count)\(providerSuffix)\(modelSuffix)")
+                return transcript
+            }
+        } catch {
+            let message = error.localizedDescription
+            self.logger.warning("gateway talk.transcribe failed: \(message, privacy: .public)")
+            GatewayDiagnostics.log("talk speech: gateway transcribe failed error=\(message)")
+        }
+
+        if !fallback.isEmpty {
+            GatewayDiagnostics.log("talk speech: using Apple fallback transcript chars=\(fallback.count)")
+        }
+        return fallback.isEmpty ? nil : fallback
+    }
+
+    private func transcribeBufferedUtterance(
+        _ bufferedUtterance: TalkSpeechBackendAudioClip,
+        gateway: GatewayNodeSession,
+        language: String?) async throws -> TalkTranscribeResponse
+    {
+        var payload: [String: Any] = [
+            "audioBase64": bufferedUtterance.data.base64EncodedString(),
+            "mimeType": bufferedUtterance.mimeType,
+            "fileExtension": bufferedUtterance.fileExtension,
+        ]
+        if let language = language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+            payload["language"] = language
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw NSError(
+                domain: "TalkModeManager",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to encode talk.transcribe payload"])
+        }
+
+        GatewayDiagnostics.log("talk speech: gateway transcribe start bytes=\(bufferedUtterance.data.count)")
+        let response = try await gateway.request(method: "talk.transcribe", paramsJSON: json, timeoutSeconds: 45)
+        return try JSONDecoder().decode(TalkTranscribeResponse.self, from: response)
     }
 
     private enum ChatCompletionState: CustomStringConvertible {
