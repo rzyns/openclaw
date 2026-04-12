@@ -306,6 +306,130 @@ describe("talk.transcribe handler", () => {
     });
   });
 
+  it("rejects malformed base64 audio payloads", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key" }));
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: "%%%not-base64%%%",
+      mimeType: "audio/wav",
+      fileExtension: "wav",
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: {
+        reason: "invalid_audio_payload",
+        retryable: false,
+      },
+    });
+    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid talk.transcribe file extensions", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key" }));
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+      fileExtension: "../../wav",
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: {
+        reason: "invalid_audio_payload",
+        retryable: false,
+      },
+    });
+    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
+  });
+
+  it("uses configured language hints when the request omits one", async () => {
+    mocks.loadConfig.mockReturnValue(
+      createTalkSttConfig({
+        apiKey: "test-key",
+        model: "nova-3",
+        language: "pl",
+      }),
+    );
+    const transcribeAudio = vi.fn().mockResolvedValue({
+      text: "dzień dobry",
+      detectedLanguage: "pl",
+    });
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "deepgram",
+      transcribeAudio,
+    });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(true);
+    expect(error).toBeUndefined();
+    expect(result).toEqual({
+      text: "dzień dobry",
+      provider: "deepgram",
+      model: "nova-3",
+      detectedLanguage: "pl",
+    });
+    expect(transcribeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({
+        language: "pl",
+      }),
+    );
+  });
+
+  it("returns empty_transcript when the provider responds with whitespace", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key" }));
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "deepgram",
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: "   ",
+      }),
+    });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "UNAVAILABLE",
+      details: {
+        reason: "empty_transcript",
+        retryable: false,
+      },
+    });
+  });
+
+  it("surfaces transcription failures as retryable", async () => {
+    mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key" }));
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "deepgram",
+      transcribeAudio: vi.fn().mockRejectedValue(new Error("provider timeout")),
+    });
+
+    const [ok, result, error] = await invokeTalkTranscribe({
+      audioBase64: Buffer.from("audio").toString("base64"),
+    });
+
+    expect(ok).toBe(false);
+    expect(result).toBeUndefined();
+    expect(error).toMatchObject({
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("provider timeout"),
+      details: {
+        reason: "transcription_failed",
+        retryable: true,
+      },
+    });
+  });
+
   it("includes detectedLanguage when the provider returns it", async () => {
     mocks.loadConfig.mockReturnValue(createTalkSttConfig({ apiKey: "test-key", model: "nova-3" }));
     mocks.getMediaUnderstandingProvider.mockReturnValue({

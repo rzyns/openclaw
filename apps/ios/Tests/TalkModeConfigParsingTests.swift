@@ -90,6 +90,95 @@ import Testing
         #expect(clip?.data.prefix(4) == Data("RIFF".utf8))
         #expect(gatewayBackend.takeBufferedUtteranceAudio() == nil)
     }
+
+    private func gatewayBackend(language: String? = "pl") -> TalkSpeechBackendConfiguration {
+        TalkSpeechBackendConfiguration(
+            kind: .gateway,
+            configuredProviderID: "gateway",
+            language: language,
+            model: "gpt-4o-transcribe")
+    }
+
+    private func bufferedUtterance() -> TalkSpeechBackendAudioClip {
+        TalkSpeechBackendAudioClip(
+            data: Data([0x52, 0x49, 0x46, 0x46]),
+            mimeType: "audio/wav",
+            fileExtension: "wav")
+    }
+
+    @Test func prefersGatewayTranscriptAndPreservesLanguageHint() async {
+        let manager = TalkModeManager(allowSimulatorCapture: true)
+
+        let outcome = await manager._test_resolveFinalTranscript(
+            fallbackTranscript: "hello from apple",
+            backendConfiguration: self.gatewayBackend(language: "pl"),
+            bufferedUtterance: self.bufferedUtterance(),
+            gatewayConnected: true,
+            gatewaySessionAttached: true,
+            gatewayText: "  cześć  ",
+            gatewayProvider: "openai",
+            gatewayModel: "gpt-4o-transcribe",
+            detectedLanguage: "pl")
+
+        #expect(outcome.transcript == "cześć")
+        #expect(outcome.requestedLanguage == "pl")
+        #expect(outcome.speechState == "active_gateway")
+        #expect(outcome.speechStatusLabel == "Gateway STT")
+        #expect(outcome.readyStatusText == "Ready")
+    }
+
+    @Test func fallsBackToAppleTranscriptWhenGatewayReturnsNothingUsable() async {
+        let manager = TalkModeManager(allowSimulatorCapture: true)
+
+        let outcome = await manager._test_resolveFinalTranscript(
+            fallbackTranscript: "  fallback from apple  ",
+            backendConfiguration: self.gatewayBackend(language: "en"),
+            bufferedUtterance: self.bufferedUtterance(),
+            gatewayConnected: true,
+            gatewaySessionAttached: true,
+            gatewayText: "   ")
+
+        #expect(outcome.transcript == "fallback from apple")
+        #expect(outcome.requestedLanguage == "en")
+        #expect(outcome.speechState == "gateway_fallback")
+        #expect(outcome.speechStatusLabel == "Gateway STT fallback")
+        #expect(outcome.readyStatusText == "Ready")
+    }
+
+    @Test func marksGatewayUnavailableWhenNoGatewayOrFallbackTranscript() async {
+        let manager = TalkModeManager(allowSimulatorCapture: true)
+
+        let outcome = await manager._test_resolveFinalTranscript(
+            fallbackTranscript: "   ",
+            backendConfiguration: self.gatewayBackend(language: "pl"),
+            bufferedUtterance: self.bufferedUtterance(),
+            gatewayConnected: false,
+            gatewaySessionAttached: false)
+
+        #expect(outcome.transcript == nil)
+        #expect(outcome.requestedLanguage == nil)
+        #expect(outcome.speechState == "gateway_unavailable")
+        #expect(outcome.speechStatusLabel == "Gateway STT unavailable")
+        #expect(outcome.readyStatusText == "Gateway STT unavailable")
+    }
+
+    @Test func marksGatewayErrorWhenTranscriptionFailsWithoutFallback() async {
+        let manager = TalkModeManager(allowSimulatorCapture: true)
+
+        let outcome = await manager._test_resolveFinalTranscript(
+            fallbackTranscript: "",
+            backendConfiguration: self.gatewayBackend(language: "pl"),
+            bufferedUtterance: self.bufferedUtterance(),
+            gatewayConnected: true,
+            gatewaySessionAttached: true,
+            gatewayErrorMessage: "provider exploded")
+
+        #expect(outcome.transcript == nil)
+        #expect(outcome.requestedLanguage == "pl")
+        #expect(outcome.speechState == "gateway_error")
+        #expect(outcome.speechStatusLabel == "Gateway STT error")
+        #expect(outcome.readyStatusText == "Gateway STT error")
+    }
 }
 
 @Suite struct TalkModeGatewayConfigParserTests {

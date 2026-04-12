@@ -1039,10 +1039,44 @@ final class TalkModeManager: NSObject {
         let detectedLanguage: String?
     }
 
+    private typealias TalkTranscribeExecutor = @Sendable (
+        TalkSpeechBackendAudioClip,
+        String?) async throws -> TalkTranscribeResponse
+
     private func resolveFinalTranscript(
         fallbackTranscript: String,
         backendConfiguration: TalkSpeechBackendConfiguration,
         bufferedUtterance: TalkSpeechBackendAudioClip?) async -> String?
+    {
+        let gatewayState = (
+            connected: self.gatewayConnected,
+            sessionAttached: self.gateway != nil)
+        let transcribe: TalkTranscribeExecutor?
+        if let gateway = self.gateway {
+            transcribe = { bufferedUtterance, language in
+                try await self.transcribeBufferedUtterance(
+                    bufferedUtterance,
+                    gateway: gateway,
+                    language: language)
+            }
+        } else {
+            transcribe = nil
+        }
+
+        return await self.resolveFinalTranscript(
+            fallbackTranscript: fallbackTranscript,
+            backendConfiguration: backendConfiguration,
+            bufferedUtterance: bufferedUtterance,
+            gatewayState: gatewayState,
+            transcribe: transcribe)
+    }
+
+    private func resolveFinalTranscript(
+        fallbackTranscript: String,
+        backendConfiguration: TalkSpeechBackendConfiguration,
+        bufferedUtterance: TalkSpeechBackendAudioClip?,
+        gatewayState: (connected: Bool, sessionAttached: Bool),
+        transcribe: TalkTranscribeExecutor?) async -> String?
     {
         let fallback = fallbackTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard backendConfiguration.usesUtteranceBoundaryFinalization else {
@@ -1063,8 +1097,8 @@ final class TalkModeManager: NSObject {
             return fallback.isEmpty ? nil : fallback
         }
 
-        guard self.gatewayConnected, let gateway else {
-            let reason = "connected=\(self.gatewayConnected) sessionAttached=\(self.gateway != nil)"
+        guard gatewayState.connected, let transcribe else {
+            let reason = "connected=\(gatewayState.connected) sessionAttached=\(gatewayState.sessionAttached)"
             self.noteGatewaySpeechUnavailable(reason: reason)
             if !fallback.isEmpty {
                 GatewayDiagnostics.log(
@@ -1076,10 +1110,7 @@ final class TalkModeManager: NSObject {
         }
 
         do {
-            let response = try await self.transcribeBufferedUtterance(
-                bufferedUtterance,
-                gateway: gateway,
-                language: backendConfiguration.language)
+            let response = try await transcribe(bufferedUtterance, backendConfiguration.language)
             let transcript = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !transcript.isEmpty {
                 self.speechStatusState = .activeGateway
@@ -2473,6 +2504,66 @@ extension TalkModeManager {
 
     func _test_incrementalIngest(_ text: String, isFinal: Bool) -> [String] {
         self.incrementalSpeechBuffer.ingest(text: text, isFinal: isFinal)
+    }
+
+    func _test_resolveFinalTranscript(
+        fallbackTranscript: String,
+        backendConfiguration: TalkSpeechBackendConfiguration,
+        bufferedUtterance: TalkSpeechBackendAudioClip?,
+        gatewayConnected: Bool,
+        gatewaySessionAttached: Bool,
+        gatewayText: String? = nil,
+        gatewayProvider: String = "gateway",
+        gatewayModel: String? = nil,
+        detectedLanguage: String? = nil,
+        gatewayErrorMessage: String? = nil)
+        async -> (
+            transcript: String?,
+            requestedLanguage: String?,
+            speechState: String,
+            speechStatusLabel: String,
+            readyStatusText: String)
+    {
+        final class RequestedLanguageBox: @unchecked Sendable {
+            var value: String?
+        }
+
+        let requestedLanguage = RequestedLanguageBox()
+        let transcribe: TalkTranscribeExecutor?
+        if gatewaySessionAttached {
+            transcribe = { _, language in
+                requestedLanguage.value = language
+                if let gatewayErrorMessage {
+                    throw NSError(
+                        domain: "TalkModeManagerTests",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: gatewayErrorMessage])
+                }
+                return TalkTranscribeResponse(
+                    text: gatewayText ?? "",
+                    provider: gatewayProvider,
+                    model: gatewayModel,
+                    detectedLanguage: detectedLanguage)
+            }
+        } else {
+            transcribe = nil
+        }
+
+        let transcript = await self.resolveFinalTranscript(
+            fallbackTranscript: fallbackTranscript,
+            backendConfiguration: backendConfiguration,
+            bufferedUtterance: bufferedUtterance,
+            gatewayState: (
+                connected: gatewayConnected,
+                sessionAttached: gatewaySessionAttached),
+            transcribe: transcribe)
+
+        return (
+            transcript: transcript,
+            requestedLanguage: requestedLanguage.value,
+            speechState: self.speechStatusState.rawValue,
+            speechStatusLabel: self.currentSpeechStatusLabel,
+            readyStatusText: self.readyStatusTextForCurrentSpeechState())
     }
 }
 #endif
