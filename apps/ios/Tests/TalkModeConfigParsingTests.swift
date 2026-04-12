@@ -1,3 +1,4 @@
+import AVFAudio
 import Foundation
 import Testing
 @testable import OpenClaw
@@ -32,6 +33,45 @@ import Testing
                     configuredProviderID: "gateway",
                     language: "pl",
                     model: "gpt-4o-transcribe")) == "GatewayTalkSpeechBackend")
+    }
+
+    @Test func buffersGatewayUtteranceAudioAsWavClip() throws {
+        let backend = TalkSpeechBackendFactory.make(for: TalkSpeechBackendConfiguration(
+            kind: .gateway,
+            configuredProviderID: "gateway",
+            language: "en",
+            model: "gpt-4o-transcribe"))
+        guard let gatewayBackend = backend as? GatewayTalkSpeechBackend else {
+            Issue.record("Expected GatewayTalkSpeechBackend instance")
+            return
+        }
+
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)
+        guard let format else {
+            Issue.record("Expected mono float32 audio format")
+            return
+        }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4) else {
+            Issue.record("Expected PCM buffer")
+            return
+        }
+
+        buffer.frameLength = 4
+        let samples = buffer.floatChannelData![0]
+        samples[0] = 0.0
+        samples[1] = 0.25
+        samples[2] = -0.25
+        samples[3] = 0.5
+
+        gatewayBackend.appendAudioBuffer(buffer)
+        #expect(gatewayBackend.hasBufferedUtteranceAudio)
+
+        let clip = gatewayBackend.takeBufferedUtteranceAudio()
+        #expect(clip?.mimeType == "audio/wav")
+        #expect(clip?.fileExtension == "wav")
+        #expect(clip?.data.count == 52)
+        #expect(clip?.data.prefix(4) == Data("RIFF".utf8))
+        #expect(gatewayBackend.takeBufferedUtteranceAudio() == nil)
     }
 }
 
