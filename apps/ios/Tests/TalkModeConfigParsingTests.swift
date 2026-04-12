@@ -35,6 +35,23 @@ import Testing
                     model: "gpt-4o-transcribe")) == "GatewayTalkSpeechBackend")
     }
 
+    @Test func formatsSpeechStatusTextForActiveAndDegradedSpeechPaths() {
+        #expect(
+            TalkModeManager._test_listeningStatusText(
+                captureMode: "continuous",
+                speechState: "active_apple") == "Listening (Apple STT)")
+        #expect(
+            TalkModeManager._test_listeningStatusText(
+                captureMode: "pushToTalk",
+                speechState: "active_gateway") == "Listening (PTT, Gateway STT)")
+        #expect(
+            TalkModeManager._test_listeningStatusText(
+                captureMode: "continuous",
+                speechState: "gateway_fallback") == "Listening (Gateway STT fallback)")
+        #expect(TalkModeManager._test_readyStatusText(speechState: "gateway_unavailable") == "Gateway STT unavailable")
+        #expect(TalkModeManager._test_readyStatusText(speechState: "gateway_error") == "Gateway STT error")
+    }
+
     @Test func buffersGatewayUtteranceAudioAsWavClip() throws {
         let backend = TalkSpeechBackendFactory.make(for: TalkSpeechBackendConfiguration(
             kind: .gateway,
