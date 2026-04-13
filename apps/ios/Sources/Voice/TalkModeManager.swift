@@ -1352,7 +1352,6 @@ final class TalkModeManager: NSObject {
             let canUseElevenLabs = (voiceId?.isEmpty == false) && (apiKey?.isEmpty == false)
 
             if canUseElevenLabs, let voiceId, let apiKey {
-                GatewayDiagnostics.log("talk tts: provider=elevenlabs voiceId=\(voiceId)")
                 let desiredOutputFormat = (directive?.outputFormat ?? self.defaultOutputFormat)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let requestedOutputFormat = (desiredOutputFormat?.isEmpty == false) ? desiredOutputFormat : nil
@@ -1364,9 +1363,11 @@ final class TalkModeManager: NSObject {
                 }
 
                 let modelId = directive?.modelId ?? self.currentModelId ?? self.defaultModelId
-                if let modelId {
-                    GatewayDiagnostics.log("talk tts: modelId=\(modelId)")
-                }
+                let diagnosticsModelId = modelId?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let diagnosticsOutputFormat = outputFormat ?? "default"
+                let diagnosticsLanguage = language ?? "auto"
+                GatewayDiagnostics.log(
+                    "talk tts: provider=elevenlabs voiceId=\(voiceId) modelId=\(diagnosticsModelId ?? "default") outputFormat=\(diagnosticsOutputFormat) language=\(diagnosticsLanguage)")
                 func makeRequest(outputFormat: String?) -> ElevenLabsTTSRequest {
                     ElevenLabsTTSRequest(
                         text: cleaned,
@@ -1397,7 +1398,7 @@ final class TalkModeManager: NSObject {
                     }
                 }
 
-                self.statusText = "Speaking…"
+                self.statusText = "Speaking (ElevenLabs)…"
                 let sampleRate = TalkTTSValidation.pcmSampleRate(from: outputFormat)
                 let result: StreamingPlaybackResult
                 if let sampleRate {
@@ -1429,7 +1430,7 @@ final class TalkModeManager: NSObject {
                 }
             } else {
                 self.logger.warning("tts unavailable; falling back to system voice (missing key or voiceId)")
-                GatewayDiagnostics.log("talk tts: provider=system (missing key or voiceId)")
+                GatewayDiagnostics.log("talk tts: provider=system reason=missing_key_or_voiceId language=\(language ?? "auto")")
                 if self.interruptOnSpeech {
                     do {
                         try self.startRecognition()
@@ -1444,7 +1445,9 @@ final class TalkModeManager: NSObject {
         } catch {
             self.logger.error(
                 "tts failed: \(error.localizedDescription, privacy: .public); falling back to system voice")
-            GatewayDiagnostics.log("talk tts: provider=system (error) msg=\(error.localizedDescription)")
+            let fallbackLanguage = ElevenLabsTTSClient.validatedLanguage(directive?.language) ?? "auto"
+            GatewayDiagnostics.log(
+                "talk tts: provider=system reason=elevenlabs_error language=\(fallbackLanguage) msg=\(error.localizedDescription)")
             do {
                 if self.interruptOnSpeech {
                     do {
@@ -1598,7 +1601,7 @@ final class TalkModeManager: NSObject {
             while !Task.isCancelled {
                 guard !self.incrementalSpeechQueue.isEmpty else { break }
                 let segment = self.incrementalSpeechQueue.removeFirst()
-                self.statusText = "Speaking…"
+                self.statusText = "Speaking (Preparing)…"
                 self.isSpeaking = true
                 self.lastSpokenText = segment
                 await self.updateIncrementalContextIfNeeded()
@@ -1949,6 +1952,9 @@ final class TalkModeManager: NSObject {
         } else {
             await self.updateIncrementalContextIfNeeded()
             guard let resolvedContext = self.incrementalSpeechContext else {
+                self.statusText = "Speaking (System)…"
+                GatewayDiagnostics.log(
+                    "talk tts: provider=system reason=incremental_missing_context language=\(self.incrementalSpeechLanguage ?? "auto")")
                 try? await TalkSystemSpeechSynthesizer.shared.speak(
                     text: text,
                     language: self.incrementalSpeechLanguage)
@@ -1958,12 +1964,18 @@ final class TalkModeManager: NSObject {
         }
 
         guard context.canUseElevenLabs, let apiKey = context.apiKey, let voiceId = context.voiceId else {
+            self.statusText = "Speaking (System)…"
+            GatewayDiagnostics.log(
+                "talk tts: provider=system reason=incremental_missing_key_or_voiceId language=\(self.incrementalSpeechLanguage ?? "auto")")
             try? await TalkSystemSpeechSynthesizer.shared.speak(
                 text: text,
                 language: self.incrementalSpeechLanguage)
             return
         }
 
+        self.statusText = "Speaking (ElevenLabs)…"
+        GatewayDiagnostics.log(
+            "talk tts: provider=elevenlabs voiceId=\(voiceId) modelId=\(context.modelId ?? "default") outputFormat=\(context.outputFormat ?? "default") language=\(self.incrementalSpeechLanguage ?? "auto") incremental=true")
         let client = ElevenLabsTTSClient(apiKey: apiKey)
         let request = self.makeIncrementalTTSRequest(
             text: text,
