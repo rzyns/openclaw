@@ -249,6 +249,43 @@ import Testing
         #expect(parsed.sttBackend.configuredProviderID == "openai")
     }
 
+    @Test func prefersResolvedStringApiKeyForSecretBackedTalkConfig() {
+        let config: [String: Any] = [
+            "talk": [
+                "provider": "elevenlabs",
+                "providers": [
+                    "elevenlabs": [
+                        "voiceId": "voice-normalized",
+                        "apiKey": [
+                            "source": "env",
+                            "provider": "default",
+                            "id": "ELEVENLABS_API_KEY",
+                        ],
+                    ],
+                ],
+                "resolved": [
+                    "provider": "elevenlabs",
+                    "config": [
+                        "voiceId": "voice-resolved",
+                        "apiKey": "resolved-key",
+                    ],
+                ],
+            ],
+        ]
+
+        let parsed = TalkModeGatewayConfigParser.parse(
+            config: config,
+            defaultProvider: "elevenlabs",
+            defaultSttProvider: "openai",
+            defaultModelIdFallback: "eleven_flash_v2_5",
+            defaultSilenceTimeoutMs: 900)
+
+        #expect(parsed.activeProvider == "elevenlabs")
+        #expect(parsed.defaultVoiceId == "voice-resolved")
+        #expect(parsed.rawConfigApiKey == "resolved-key")
+        #expect(parsed.missingResolvedPayload == false)
+    }
+
     @Test func keepsAppleSpeechBackendForNonGatewaySttProviders() {
         let config: [String: Any] = [
             "talk": [

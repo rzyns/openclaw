@@ -28,6 +28,37 @@
       }
     },
     {
+      "id": "configured_secretref_with_resolved_string",
+      "defaultProvider": "elevenlabs",
+      "payloadValid": true,
+      "expectedSelection": {
+        "provider": "elevenlabs",
+        "normalizedPayload": true,
+        "voiceId": "voice-secretref",
+        "apiKey": "resolved-elevenlabs-key"
+      },
+      "talk": {
+        "resolved": {
+          "provider": "elevenlabs",
+          "config": {
+            "voiceId": "voice-secretref",
+            "apiKey": "resolved-elevenlabs-key"
+          }
+        },
+        "provider": "elevenlabs",
+        "providers": {
+          "elevenlabs": {
+            "voiceId": "voice-secretref",
+            "apiKey": {
+              "source": "env",
+              "provider": "default",
+              "id": "ELEVENLABS_API_KEY"
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "normalized_missing_resolved",
       "defaultProvider": "elevenlabs",
       "payloadValid": false,

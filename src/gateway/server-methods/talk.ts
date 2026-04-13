@@ -403,7 +403,6 @@ function resolveTalkTranscribeFileName(fileExtension: string | undefined): strin
 }
 
 function resolveTalkResponseFromConfig(params: {
-  includeSecrets: boolean;
   sourceConfig: OpenClawConfig;
   runtimeConfig: OpenClawConfig;
 }): TalkConfigResponse | undefined {
@@ -415,10 +414,6 @@ function resolveTalkResponseFromConfig(params: {
   const payload = buildTalkConfigResponse(normalizedTalk);
   if (!payload) {
     return undefined;
-  }
-
-  if (params.includeSecrets) {
-    return payload;
   }
 
   const sourceResolved = resolveActiveTalkProviderConfig(normalizedTalk);
@@ -485,7 +480,6 @@ export const talkHandlers: GatewayRequestHandlers = {
     const configPayload: Record<string, unknown> = {};
 
     const talk = resolveTalkResponseFromConfig({
-      includeSecrets,
       sourceConfig: snapshot.config,
       runtimeConfig,
     });

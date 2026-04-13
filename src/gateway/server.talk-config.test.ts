@@ -269,6 +269,68 @@ describe("gateway talk.config", () => {
     });
   });
 
+  it("returns resolved apiKey strings in talk.resolved for authorized SecretRef-backed responses", async () => {
+    await writeTalkConfig({
+      provider: GENERIC_TALK_PROVIDER_ID,
+      apiKey: {
+        source: "env",
+        provider: "default",
+        id: GENERIC_TALK_API_ENV,
+      },
+      voiceId: "voice-secretref",
+    });
+
+    await withEnvAsync({ [GENERIC_TALK_API_ENV]: "env-acme-key" }, async () => {
+      await withSpeechProviders(
+        [
+          {
+            pluginId: "acme-talk-secretref-test",
+            source: "test",
+            provider: {
+              id: GENERIC_TALK_PROVIDER_ID,
+              label: "Acme Speech",
+              isConfigured: () => true,
+              resolveTalkConfig: ({ talkProviderConfig }) => ({
+                ...talkProviderConfig,
+                apiKey:
+                  typeof process.env[GENERIC_TALK_API_ENV] === "string"
+                    ? process.env[GENERIC_TALK_API_ENV]
+                    : undefined,
+              }),
+              synthesize: async () => ({
+                audioBuffer: Buffer.from([1]),
+                outputFormat: "mp3",
+                fileExtension: ".mp3",
+                voiceCompatible: false,
+              }),
+            },
+          },
+        ],
+        async () => {
+          await withTalkConfigConnection(
+            ["operator.read", "operator.write", "operator.talk.secrets"],
+            async (ws) => {
+              const res = await fetchTalkConfig(ws, { includeSecrets: true });
+              expect(res.ok, JSON.stringify(res.error)).toBe(true);
+              expect(validateTalkConfigResult(res.payload)).toBe(true);
+              const secretRef = {
+                source: "env",
+                provider: "default",
+                id: GENERIC_TALK_API_ENV,
+              } satisfies SecretRef;
+              expectTalkConfig(res.payload?.config?.talk, {
+                provider: GENERIC_TALK_PROVIDER_ID,
+                voiceId: "voice-secretref",
+                providerApiKey: secretRef,
+                resolvedApiKey: "env-acme-key",
+              });
+            },
+          );
+        },
+      );
+    });
+  });
+
   it("preserves configured Talk provider data when plugin-owned defaults exist", async () => {
     await writeTalkConfig({
       provider: GENERIC_TALK_PROVIDER_ID,

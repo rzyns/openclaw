@@ -24,6 +24,35 @@ struct TalkConfigParsingTests {
         #expect(selection?.config["voiceId"]?.stringValue == "voice-resolved")
     }
 
+    @Test func prefersResolvedStringApiKeyWhenConfiguredProviderApiKeyIsSecretRef() {
+        let talk: [String: AnyCodable] = [
+            "resolved": AnyCodable([
+                "provider": "elevenlabs",
+                "config": [
+                    "voiceId": "voice-resolved",
+                    "apiKey": "resolved-key",
+                ],
+            ]),
+            "provider": AnyCodable("elevenlabs"),
+            "providers": AnyCodable([
+                "elevenlabs": [
+                    "voiceId": "voice-normalized",
+                    "apiKey": [
+                        "source": "env",
+                        "provider": "default",
+                        "id": "ELEVENLABS_API_KEY",
+                    ],
+                ],
+            ]),
+        ]
+
+        let selection = TalkConfigParsing.selectProviderConfig(talk, defaultProvider: "elevenlabs")
+        #expect(selection?.provider == "elevenlabs")
+        #expect(selection?.normalizedPayload == true)
+        #expect(selection?.config["voiceId"]?.stringValue == "voice-resolved")
+        #expect(selection?.config["apiKey"]?.stringValue == "resolved-key")
+    }
+
     @Test func rejectsNormalizedTalkProviderPayloadWithoutResolved() {
         let talk: [String: AnyCodable] = [
             "provider": AnyCodable("elevenlabs"),
