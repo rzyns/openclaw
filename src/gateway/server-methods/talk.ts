@@ -656,7 +656,7 @@ export const talkHandlers: GatewayRequestHandlers = {
       const language = requestedLanguage ?? setup.language;
       const result = await setup.transcribeAudio({
         buffer: audioBuffer,
-        fileName: resolveTalkTranscribeFileName(normalizedExtension),
+        fileName: resolveTalkTranscribeFileName(normalizedExtension ?? undefined),
         ...(mimeType ? { mime: mimeType } : {}),
         apiKey: setup.apiKey,
         ...(setup.model ? { model: setup.model } : {}),

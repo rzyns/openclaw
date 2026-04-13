@@ -106,6 +106,23 @@ import Testing
             fileExtension: "wav")
     }
 
+    @Test func choosesPluginGatewayMethodForPluginOwnedGatewaySpeech() {
+        #expect(
+            TalkModeManager._test_gatewayTranscribeMethod(
+                for: TalkSpeechBackendConfiguration(
+                    kind: .gateway,
+                    configuredProviderID: "openai",
+                    language: "pl",
+                    model: "gpt-4o-transcribe")) == "talkstt.transcribe")
+        #expect(
+            TalkModeManager._test_gatewayTranscribeMethod(
+                for: TalkSpeechBackendConfiguration(
+                    kind: .gateway,
+                    configuredProviderID: "gateway",
+                    language: "pl",
+                    model: "gpt-4o-transcribe")) == "talk.transcribe")
+    }
+
     @Test func prefersGatewayTranscriptAndPreservesLanguageHint() async {
         let manager = TalkModeManager(allowSimulatorCapture: true)
 
@@ -296,6 +313,75 @@ import Testing
         #expect(parsed.activeSttProvider == "gateway")
         #expect(parsed.sttBackend.kind == .gateway)
         #expect(parsed.sttBackend.configuredProviderID == "gateway")
+        #expect(parsed.sttBackend.language == "pl")
+        #expect(parsed.sttBackend.model == "gpt-4o-transcribe")
+    }
+
+    @Test func prefersPluginOwnedSttConfigForGatewayTranscription() {
+        let config: [String: Any] = [
+            "talk": [
+                "provider": "elevenlabs",
+                "providers": [
+                    "elevenlabs": [
+                        "voiceId": "voice-resolved",
+                        "modelId": "eleven_flash_v2_5",
+                    ],
+                ],
+                "resolved": [
+                    "provider": "elevenlabs",
+                    "config": [
+                        "voiceId": "voice-resolved",
+                        "modelId": "eleven_flash_v2_5",
+                    ],
+                ],
+                "sttProvider": "openai",
+                "sttProviders": [
+                    "openai": [
+                        "language": "en",
+                        "model": "whisper-1",
+                    ],
+                ],
+                "resolvedStt": [
+                    "provider": "openai",
+                    "config": [
+                        "language": "en",
+                        "model": "whisper-1",
+                    ],
+                ],
+            ],
+        ]
+        let sttConfig: [String: Any] = [
+            "talkstt": [
+                "sttProvider": "openai",
+                "sttProviders": [
+                    "openai": [
+                        "language": "pl",
+                        "model": "gpt-4o-transcribe",
+                    ],
+                ],
+                "resolvedStt": [
+                    "provider": "openai",
+                    "config": [
+                        "language": "pl",
+                        "model": "gpt-4o-transcribe",
+                    ],
+                ],
+            ],
+        ]
+
+        let parsed = TalkModeGatewayConfigParser.parse(
+            config: config,
+            sttConfig: sttConfig,
+            defaultProvider: "elevenlabs",
+            defaultSttProvider: "openai",
+            defaultModelIdFallback: "eleven_flash_v2_5",
+            defaultSilenceTimeoutMs: 900)
+
+        #expect(parsed.activeProvider == "elevenlabs")
+        #expect(parsed.defaultVoiceId == "voice-resolved")
+        #expect(parsed.activeSttProvider == "openai")
+        #expect(parsed.sttBackend.kind == .gateway)
+        #expect(parsed.sttBackend.configuredProviderID == "openai")
         #expect(parsed.sttBackend.language == "pl")
         #expect(parsed.sttBackend.model == "gpt-4o-transcribe")
     }

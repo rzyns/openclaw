@@ -63,7 +63,7 @@ function createTalkSttConfig(
   } as OpenClawConfig;
 }
 
-async function invokeTalkTranscribe(params: unknown) {
+async function invokeTalkTranscribe(params: Record<string, unknown>) {
   const respond = vi.fn();
   await talkHandlers["talk.transcribe"]({
     req: { type: "req", id: "1", method: "talk.transcribe" },

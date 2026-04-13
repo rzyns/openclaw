@@ -1,0 +1,25 @@
+{
+  "id": "talk-stt",
+  "enabledByDefault": true,
+  "name": "Talk STT",
+  "description": "Talk STT compatibility shim with plugin-owned transcription config.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "provider": {
+        "type": "string"
+      },
+      "providers": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  },
+  "configContracts": {
+    "compatibilityMigrationPaths": ["plugins.entries.talk-stt.config"]
+  }
+}

@@ -25,12 +25,14 @@ enum TalkModeGatewayConfigParser {
 
     static func parse(
         config: [String: Any],
+        sttConfig: [String: Any]? = nil,
         defaultProvider: String,
         defaultSttProvider: String,
         defaultModelIdFallback: String,
         defaultSilenceTimeoutMs: Int
     ) -> TalkModeGatewayConfigState {
         let talk = TalkConfigParsing.bridgeFoundationDictionary(config["talk"] as? [String: Any])
+        let talkStt = TalkConfigParsing.bridgeFoundationDictionary(sttConfig?["talkstt"] as? [String: Any])
         let selection = TalkConfigParsing.selectProviderConfig(
             talk,
             defaultProvider: defaultProvider,
@@ -63,23 +65,35 @@ enum TalkModeGatewayConfigParser {
             talk,
             fallback: defaultSilenceTimeoutMs)
 
-        let sttSelection = TalkConfigParsing.selectSttProviderConfig(
-            talk,
+        let pluginSttSelection = TalkConfigParsing.selectSttProviderConfig(
+            talkStt,
             defaultProvider: defaultSttProvider,
             allowLegacyFallback: false)
-        let sttConfig = sttSelection?.config
-        let sttLanguage = sttConfig?["language"]?.stringValue?
+        let pluginConfiguredSttProviderID = self.normalizedProviderID(
+            pluginSttSelection?.provider
+                ?? talkStt?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines))
+        let usesPluginGatewayStt = pluginSttSelection != nil || pluginConfiguredSttProviderID != nil
+        let effectiveSttPayload = usesPluginGatewayStt ? talkStt : talk
+        let sttSelection = usesPluginGatewayStt
+            ? pluginSttSelection
+            : TalkConfigParsing.selectSttProviderConfig(
+                talk,
+                defaultProvider: defaultSttProvider,
+                allowLegacyFallback: false)
+        let resolvedSttConfig = sttSelection?.config
+        let sttLanguage = resolvedSttConfig?["language"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let sttModel = sttConfig?["model"]?.stringValue?
+        let sttModel = resolvedSttConfig?["model"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let configuredSttProviderID = self.normalizedProviderID(
             sttSelection?.provider
-                ?? talk?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines))
+                ?? effectiveSttPayload?["sttProvider"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines))
         let activeSttProvider = configuredSttProviderID ?? defaultSttProvider
         let sttBackend = self.resolveSttBackend(
             configuredProviderID: configuredSttProviderID,
             language: sttLanguage,
-            model: sttModel)
+            model: sttModel,
+            useGateway: usesPluginGatewayStt)
 
         return TalkModeGatewayConfigState(
             activeProvider: activeProvider,
@@ -106,11 +120,12 @@ enum TalkModeGatewayConfigParser {
     private static func resolveSttBackend(
         configuredProviderID: String?,
         language: String?,
-        model: String?
+        model: String?,
+        useGateway: Bool = false
     ) -> TalkSpeechBackendConfiguration {
         guard let providerID = configuredProviderID else { return .appleDefault }
         let kind: TalkSpeechBackendKind
-        if self.gatewaySttProviderAliases.contains(providerID) {
+        if useGateway || self.gatewaySttProviderAliases.contains(providerID) {
             kind = .gateway
         } else {
             kind = .apple

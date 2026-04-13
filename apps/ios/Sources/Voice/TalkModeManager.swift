@@ -1043,6 +1043,18 @@ final class TalkModeManager: NSObject {
         TalkSpeechBackendAudioClip,
         String?) async throws -> TalkTranscribeResponse
 
+    private func gatewayTranscribeMethod(for configuration: TalkSpeechBackendConfiguration) -> String {
+        let provider = configuration.configuredProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if configuration.kind == .gateway,
+           let provider,
+           !provider.isEmpty,
+           provider != "gateway"
+        {
+            return "talkstt.transcribe"
+        }
+        return "talk.transcribe"
+    }
+
     private func resolveFinalTranscript(
         fallbackTranscript: String,
         backendConfiguration: TalkSpeechBackendConfiguration,
@@ -1051,13 +1063,15 @@ final class TalkModeManager: NSObject {
         let gatewayState = (
             connected: self.gatewayConnected,
             sessionAttached: self.gateway != nil)
+        let transcribeMethod = self.gatewayTranscribeMethod(for: backendConfiguration)
         let transcribe: TalkTranscribeExecutor?
         if let gateway = self.gateway {
             transcribe = { bufferedUtterance, language in
                 try await self.transcribeBufferedUtterance(
                     bufferedUtterance,
                     gateway: gateway,
-                    language: language)
+                    language: language,
+                    method: transcribeMethod)
             }
         } else {
             transcribe = nil
@@ -1068,6 +1082,7 @@ final class TalkModeManager: NSObject {
             backendConfiguration: backendConfiguration,
             bufferedUtterance: bufferedUtterance,
             gatewayState: gatewayState,
+            transcribeMethod: transcribeMethod,
             transcribe: transcribe)
     }
 
@@ -1076,6 +1091,7 @@ final class TalkModeManager: NSObject {
         backendConfiguration: TalkSpeechBackendConfiguration,
         bufferedUtterance: TalkSpeechBackendAudioClip?,
         gatewayState: (connected: Bool, sessionAttached: Bool),
+        transcribeMethod: String,
         transcribe: TalkTranscribeExecutor?) async -> String?
     {
         let fallback = fallbackTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1126,7 +1142,7 @@ final class TalkModeManager: NSObject {
                 return transcript
             }
 
-            let reason = "empty transcript from talk.transcribe response"
+            let reason = "empty transcript from \(transcribeMethod) response"
             if !fallback.isEmpty {
                 self.noteGatewaySpeechFallback(reason: reason)
                 GatewayDiagnostics.log(
@@ -1137,14 +1153,14 @@ final class TalkModeManager: NSObject {
             }
         } catch {
             let message = error.localizedDescription
-            self.logger.warning("gateway talk.transcribe failed: \(message, privacy: .public)")
+            self.logger.warning("gateway \(transcribeMethod, privacy: .public) failed: \(message, privacy: .public)")
             if !fallback.isEmpty {
-                self.noteGatewaySpeechFallback(reason: "talk.transcribe failed error=\(message)")
+                self.noteGatewaySpeechFallback(reason: "\(transcribeMethod) failed error=\(message)")
             } else {
-                self.noteGatewaySpeechError(reason: "talk.transcribe failed error=\(message)")
+                self.noteGatewaySpeechError(reason: "\(transcribeMethod) failed error=\(message)")
             }
             GatewayDiagnostics.log(
-                "talk speech: gateway transcribe failed error=\(message)")
+                "talk speech: gateway \(transcribeMethod) failed error=\(message)")
         }
 
         if !fallback.isEmpty {
@@ -1157,7 +1173,8 @@ final class TalkModeManager: NSObject {
     private func transcribeBufferedUtterance(
         _ bufferedUtterance: TalkSpeechBackendAudioClip,
         gateway: GatewayNodeSession,
-        language: String?) async throws -> TalkTranscribeResponse
+        language: String?,
+        method: String) async throws -> TalkTranscribeResponse
     {
         var payload: [String: Any] = [
             "audioBase64": bufferedUtterance.data.base64EncodedString(),
@@ -1173,7 +1190,7 @@ final class TalkModeManager: NSObject {
             throw NSError(
                 domain: "TalkModeManager",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to encode talk.transcribe payload"])
+                userInfo: [NSLocalizedDescriptionKey: "Failed to encode \(method) payload"])
         }
 
         let normalizedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1184,8 +1201,8 @@ final class TalkModeManager: NSObject {
             languageSuffix = ""
         }
         GatewayDiagnostics.log(
-            "talk speech: gateway transcribe start bytes=\(bufferedUtterance.data.count)\(languageSuffix)")
-        let response = try await gateway.request(method: "talk.transcribe", paramsJSON: json, timeoutSeconds: 45)
+            "talk speech: gateway \(method) start bytes=\(bufferedUtterance.data.count)\(languageSuffix)")
+        let response = try await gateway.request(method: method, paramsJSON: json, timeoutSeconds: 45)
         return try JSONDecoder().decode(TalkTranscribeResponse.self, from: response)
     }
 
@@ -2281,19 +2298,46 @@ extension TalkModeManager {
         return trimmed
     }
 
+    private func requestGatewayConfig(
+        method: String,
+        gateway: GatewayNodeSession) async throws -> [String: Any]
+    {
+        let response = try await gateway.request(
+            method: method,
+            paramsJSON: "{\"includeSecrets\":true}",
+            timeoutSeconds: 8)
+        guard let json = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+            return [:]
+        }
+        return json["config"] as? [String: Any] ?? [:]
+    }
+
+    private func requestOptionalGatewayConfig(
+        method: String,
+        gateway: GatewayNodeSession) async -> [String: Any]?
+    {
+        do {
+            return try await self.requestGatewayConfig(method: method, gateway: gateway)
+        } catch let error as GatewayResponseError {
+            GatewayDiagnostics.log(
+                "talk config optional method=\(method) unavailable code=\(error.code) reason=\(error.detailsReason ?? "none")")
+            return nil
+        } catch {
+            GatewayDiagnostics.log(
+                "talk config optional method=\(method) unavailable error=\(error.localizedDescription)")
+            return nil
+        }
+    }
+
     func reloadConfig() async {
         guard let gateway else { return }
         self.pcmFormatUnavailable = false
         do {
-            let res = try await gateway.request(
-                method: "talk.config",
-                paramsJSON: "{\"includeSecrets\":true}",
-                timeoutSeconds: 8
-            )
-            guard let json = try JSONSerialization.jsonObject(with: res) as? [String: Any] else { return }
-            guard let config = json["config"] as? [String: Any] else { return }
+            let config = try await self.requestGatewayConfig(method: "talk.config", gateway: gateway)
+            let sttConfig = await self.requestOptionalGatewayConfig(method: "talkstt.config", gateway: gateway)
             let parsed = TalkModeGatewayConfigParser.parse(
                 config: config,
+                sttConfig: sttConfig,
                 defaultProvider: Self.defaultTalkProvider,
                 defaultSttProvider: Self.defaultTalkSttProvider,
                 defaultModelIdFallback: Self.defaultModelIdFallback,
@@ -2476,6 +2520,13 @@ extension TalkModeManager {
             speechStatusState: resolvedState)
     }
 
+    static func _test_gatewayTranscribeMethod(
+        for configuration: TalkSpeechBackendConfiguration
+    ) -> String {
+        let manager = TalkModeManager(allowSimulatorCapture: true)
+        return manager.gatewayTranscribeMethod(for: configuration)
+    }
+
     static func _test_readyStatusText(speechState: String) -> String {
         let resolvedState = SpeechStatusState(rawValue: speechState) ?? .activeApple
         return self.readyStatusText(for: resolvedState)
@@ -2556,6 +2607,7 @@ extension TalkModeManager {
             gatewayState: (
                 connected: gatewayConnected,
                 sessionAttached: gatewaySessionAttached),
+            transcribeMethod: self.gatewayTranscribeMethod(for: backendConfiguration),
             transcribe: transcribe)
 
         return (
