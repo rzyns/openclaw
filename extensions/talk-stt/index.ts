@@ -246,150 +246,158 @@ export default definePluginEntry({
   name: "Talk STT",
   description: "Talk STT compatibility shim for plugin-owned gateway transcription config",
   register(api: OpenClawPluginApi) {
-    api.registerGatewayMethod("talkstt.config", async ({ params, respond, client }) => {
-      if (!validateTalkConfigParams(params)) {
-        respond(
-          false,
-          undefined,
-          errorShape(
-            ErrorCodes.INVALID_REQUEST,
-            `invalid talkstt.config params: ${formatValidationErrors(validateTalkConfigParams.errors)}`,
-          ),
-        );
-        return;
-      }
-
-      const includeSecrets = Boolean((params as { includeSecrets?: boolean }).includeSecrets);
-      if (includeSecrets && !canReadTalkSecrets(client)) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.INVALID_REQUEST, `missing scope: ${TALK_SECRETS_SCOPE}`),
-        );
-        return;
-      }
-
-      const { snapshot } = await readConfigFileSnapshotForWrite();
-      const runtimeConfig = loadConfig();
-      const sourcePayload = buildTalkConfigResponse(resolveTalkSttSection(snapshot.config));
-      const runtimePayload = buildTalkConfigResponse(resolveTalkSttSection(runtimeConfig));
-      const payload = includeSecrets
-        ? (sourcePayload ?? runtimePayload)
-        : (runtimePayload ?? sourcePayload);
-
-      respond(
-        true,
-        {
-          config: payload
-            ? {
-                talkstt: includeSecrets ? payload : redactConfigObject(payload),
-              }
-            : {},
-        },
-        undefined,
-      );
-    });
-
-    api.registerGatewayMethod("talkstt.transcribe", async ({ params, respond }) => {
-      if (!validateTalkTranscribeParams(params)) {
-        respond(
-          false,
-          undefined,
-          errorShape(
-            ErrorCodes.INVALID_REQUEST,
-            `invalid talkstt.transcribe params: ${formatValidationErrors(validateTalkTranscribeParams.errors)}`,
-          ),
-        );
-        return;
-      }
-
-      const runtimeConfig = loadConfig();
-      const setup = await resolveTalkTranscribeSetup(runtimeConfig);
-      if ("error" in setup) {
-        respond(false, undefined, talkTranscribeError(setup.reason, setup.error));
-        return;
-      }
-
-      const audioBase64 = normalizeOptionalString(params.audioBase64);
-      const audioBuffer = audioBase64 ? decodeTalkAudioBase64(audioBase64) : null;
-      if (!audioBuffer) {
-        respond(
-          false,
-          undefined,
-          talkTranscribeError(
-            "invalid_audio_payload",
-            "talkstt.transcribe requires a valid non-empty base64 audio payload",
-          ),
-        );
-        return;
-      }
-
-      const fileExtension = normalizeTalkAudioExtension(
-        normalizeOptionalString(params.fileExtension),
-      );
-      if (fileExtension === null) {
-        respond(
-          false,
-          undefined,
-          talkTranscribeError(
-            "invalid_audio_payload",
-            "talkstt.transcribe fileExtension must be a simple audio container extension",
-          ),
-        );
-        return;
-      }
-
-      const requestedLanguage = normalizeOptionalString(params.language) ?? setup.language;
-
-      try {
-        const result = await setup.transcribeAudio({
-          buffer: audioBuffer,
-          fileName: resolveTalkTranscribeFileName(fileExtension),
-          mime: normalizeOptionalString(params.mimeType),
-          apiKey: setup.apiKey,
-          model: setup.model,
-          language: requestedLanguage,
-          ...(setup.baseUrl ? { baseUrl: setup.baseUrl } : {}),
-          ...(setup.headers ? { headers: setup.headers } : {}),
-          ...(setup.request ? { request: setup.request } : {}),
-          ...(setup.query ? { query: setup.query } : {}),
-          timeoutMs: 30_000,
-        });
-        const text = normalizeOptionalString(result.text);
-        if (!text) {
+    api.registerGatewayMethod(
+      "talkstt.config",
+      async ({ params, respond, client }) => {
+        if (!validateTalkConfigParams(params)) {
           respond(
             false,
             undefined,
-            talkTranscribeError(
-              "empty_transcript",
-              "talkstt.transcribe returned an empty transcript",
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              `invalid talkstt.config params: ${formatValidationErrors(validateTalkConfigParams.errors)}`,
             ),
           );
           return;
         }
 
+        const includeSecrets = Boolean((params as { includeSecrets?: boolean }).includeSecrets);
+        if (includeSecrets && !canReadTalkSecrets(client)) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, `missing scope: ${TALK_SECRETS_SCOPE}`),
+          );
+          return;
+        }
+
+        const { snapshot } = await readConfigFileSnapshotForWrite();
+        const runtimeConfig = loadConfig();
+        const sourcePayload = buildTalkConfigResponse(resolveTalkSttSection(snapshot.config));
+        const runtimePayload = buildTalkConfigResponse(resolveTalkSttSection(runtimeConfig));
+        const payload = includeSecrets
+          ? (sourcePayload ?? runtimePayload)
+          : (runtimePayload ?? sourcePayload);
+
         respond(
           true,
           {
-            text,
-            provider: setup.providerId,
-            model: normalizeOptionalString(result.model) ?? setup.model,
-            ...(normalizeOptionalString(result.detectedLanguage)
-              ? { detectedLanguage: normalizeOptionalString(result.detectedLanguage) }
-              : {}),
+            config: payload
+              ? {
+                  talkstt: includeSecrets ? payload : redactConfigObject(payload),
+                }
+              : {},
           },
           undefined,
         );
-      } catch (error) {
-        respond(
-          false,
-          undefined,
-          talkTranscribeError(
-            "transcription_failed",
-            `talkstt.transcribe failed: ${formatErrorMessage(error)}`,
-          ),
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "talkstt.transcribe",
+      async ({ params, respond }) => {
+        if (!validateTalkTranscribeParams(params)) {
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              `invalid talkstt.transcribe params: ${formatValidationErrors(validateTalkTranscribeParams.errors)}`,
+            ),
+          );
+          return;
+        }
+
+        const runtimeConfig = loadConfig();
+        const setup = await resolveTalkTranscribeSetup(runtimeConfig);
+        if ("error" in setup) {
+          respond(false, undefined, talkTranscribeError(setup.reason, setup.error));
+          return;
+        }
+
+        const audioBase64 = normalizeOptionalString(params.audioBase64);
+        const audioBuffer = audioBase64 ? decodeTalkAudioBase64(audioBase64) : null;
+        if (!audioBuffer) {
+          respond(
+            false,
+            undefined,
+            talkTranscribeError(
+              "invalid_audio_payload",
+              "talkstt.transcribe requires a valid non-empty base64 audio payload",
+            ),
+          );
+          return;
+        }
+
+        const fileExtension = normalizeTalkAudioExtension(
+          normalizeOptionalString(params.fileExtension),
         );
-      }
-    });
+        if (fileExtension === null) {
+          respond(
+            false,
+            undefined,
+            talkTranscribeError(
+              "invalid_audio_payload",
+              "talkstt.transcribe fileExtension must be a simple audio container extension",
+            ),
+          );
+          return;
+        }
+
+        const requestedLanguage = normalizeOptionalString(params.language) ?? setup.language;
+
+        try {
+          const result = await setup.transcribeAudio({
+            buffer: audioBuffer,
+            fileName: resolveTalkTranscribeFileName(fileExtension),
+            mime: normalizeOptionalString(params.mimeType),
+            apiKey: setup.apiKey,
+            model: setup.model,
+            language: requestedLanguage,
+            ...(setup.baseUrl ? { baseUrl: setup.baseUrl } : {}),
+            ...(setup.headers ? { headers: setup.headers } : {}),
+            ...(setup.request ? { request: setup.request } : {}),
+            ...(setup.query ? { query: setup.query } : {}),
+            timeoutMs: 30_000,
+          });
+          const text = normalizeOptionalString(result.text);
+          if (!text) {
+            respond(
+              false,
+              undefined,
+              talkTranscribeError(
+                "empty_transcript",
+                "talkstt.transcribe returned an empty transcript",
+              ),
+            );
+            return;
+          }
+
+          respond(
+            true,
+            {
+              text,
+              provider: setup.providerId,
+              model: normalizeOptionalString(result.model) ?? setup.model,
+              ...(normalizeOptionalString(result.detectedLanguage)
+                ? { detectedLanguage: normalizeOptionalString(result.detectedLanguage) }
+                : {}),
+            },
+            undefined,
+          );
+        } catch (error) {
+          respond(
+            false,
+            undefined,
+            talkTranscribeError(
+              "transcription_failed",
+              `talkstt.transcribe failed: ${formatErrorMessage(error)}`,
+            ),
+          );
+        }
+      },
+      { scope: "operator.write" },
+    );
   },
 });

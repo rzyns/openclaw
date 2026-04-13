@@ -55,6 +55,7 @@ function createRuntimeConfig(apiKey: unknown): OpenClawConfig {
 
 function setup(config: OpenClawConfig = createRuntimeConfig("sk-test")) {
   const methods = new Map<string, unknown>();
+  const methodScopes = new Map<string, string | undefined>();
   const api = createTestPluginApi({
     id: "talk-stt",
     name: "Talk STT",
@@ -63,10 +64,13 @@ function setup(config: OpenClawConfig = createRuntimeConfig("sk-test")) {
     source: "test",
     config,
     runtime: {} as never,
-    registerGatewayMethod: (method: string, handler: unknown) => methods.set(method, handler),
+    registerGatewayMethod: (method: string, handler: unknown, opts?: { scope?: string }) => {
+      methods.set(method, handler);
+      methodScopes.set(method, opts?.scope);
+    },
   });
   void plugin.register(api);
-  return { methods };
+  return { methods, methodScopes };
 }
 
 describe("talk-stt plugin", () => {
@@ -76,9 +80,11 @@ describe("talk-stt plugin", () => {
     mocks.resolveConfiguredSecretInputString.mockResolvedValue({ value: undefined });
   });
 
-  it("registers talkstt gateway methods", () => {
-    const { methods } = setup();
+  it("registers talkstt gateway methods with least-privilege scopes", () => {
+    const { methods, methodScopes } = setup();
     expect([...methods.keys()].toSorted()).toEqual(["talkstt.config", "talkstt.transcribe"]);
+    expect(methodScopes.get("talkstt.config")).toBe("operator.read");
+    expect(methodScopes.get("talkstt.transcribe")).toBe("operator.write");
   });
 
   it("returns plugin-owned talkstt config payload", async () => {
