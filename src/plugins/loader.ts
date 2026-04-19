@@ -246,20 +246,58 @@ function resolvePluginScopeDebugMemorySlotInScope(params: {
     : params.onlyPluginIds.includes(params.memorySlot);
 }
 
-function buildPluginScopeDebugCaller(): string {
-  return (new Error().stack ?? "")
+const PLUGIN_SCOPE_DEBUG_MAX_CALLER_FRAMES = 5;
+const PLUGIN_SCOPE_DEBUG_HELPER_LABELS = new Set([
+  "buildPluginScopeDebugCaller",
+  "emitPluginScopeDebugLog",
+]);
+
+function isAbsoluteFilesystemPathLike(value: string): boolean {
+  return /^(?:file:\/\/\/|file:\/\/|\/|[A-Za-z]:[\\/]|\\\\)/.test(value);
+}
+
+function sanitizePluginScopeDebugCallerFrame(frame: string): string | null {
+  const trimmedFrame = frame.trim();
+  if (trimmedFrame.length === 0 || trimmedFrame.includes("node_modules")) {
+    return null;
+  }
+
+  const withoutAtPrefix = trimmedFrame.startsWith("at ")
+    ? trimmedFrame.slice(3).trim()
+    : trimmedFrame;
+  if (withoutAtPrefix.length === 0) {
+    return null;
+  }
+
+  const label = withoutAtPrefix.includes(" (")
+    ? withoutAtPrefix.slice(0, withoutAtPrefix.lastIndexOf(" (")).trim()
+    : withoutAtPrefix;
+  if (label.length === 0) {
+    return null;
+  }
+
+  if (
+    PLUGIN_SCOPE_DEBUG_HELPER_LABELS.has(label) ||
+    [...PLUGIN_SCOPE_DEBUG_HELPER_LABELS].some((helperLabel) => label.includes(helperLabel))
+  ) {
+    return null;
+  }
+
+  if (isAbsoluteFilesystemPathLike(label) || /:\d+:\d+/.test(label)) {
+    return null;
+  }
+
+  return label;
+}
+
+function buildPluginScopeDebugCaller(): string[] {
+  const sanitizedFrames = (new Error().stack ?? "")
     .split("\n")
     .slice(1)
-    .map((frame) => frame.trim())
-    .filter(
-      (frame) =>
-        frame.length > 0 &&
-        !frame.includes("node_modules") &&
-        !frame.includes("buildPluginScopeDebugCaller") &&
-        !frame.includes("emitPluginScopeDebugLog"),
-    )
-    .slice(0, 5)
-    .join(" <- ");
+    .map((frame) => sanitizePluginScopeDebugCallerFrame(frame))
+    .filter((frame): frame is string => Boolean(frame));
+
+  return [...new Set(sanitizedFrames)].slice(0, PLUGIN_SCOPE_DEBUG_MAX_CALLER_FRAMES);
 }
 
 function emitPluginScopeDebugLog(params: {
