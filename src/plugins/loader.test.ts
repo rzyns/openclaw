@@ -1746,7 +1746,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
       });
     });
 
-    const debugCalls = calls.filter((call) => call.message === "[plugin-scope-debug]");
+    const debugCalls = calls.filter((call) => call.message.startsWith("[plugin-scope-debug]"));
     expect(debugCalls).toHaveLength(3);
 
     const pluginLoadCalls = debugCalls.filter((call) => call.meta?.tag === "plugin-load");

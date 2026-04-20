@@ -315,11 +315,7 @@ function emitPluginScopeDebugLog(params: {
   shouldActivate: boolean;
   cacheKey: string;
 }): void {
-  (
-    params.logger as PluginLogger & {
-      warn: (message: string, meta?: Record<string, unknown>) => void;
-    }
-  ).warn("[plugin-scope-debug]", {
+  const payload = {
     tag: params.tag,
     onlyPluginIds: params.onlyPluginIds ?? "all",
     memorySlotInScope: resolvePluginScopeDebugMemorySlotInScope({
@@ -329,7 +325,12 @@ function emitPluginScopeDebugLog(params: {
     shouldActivate: params.shouldActivate,
     cacheKey: params.cacheKey,
     caller: buildPluginScopeDebugCaller(),
-  });
+  };
+  (
+    params.logger as PluginLogger & {
+      warn: (message: string, meta?: Record<string, unknown>) => void;
+    }
+  ).warn(`[plugin-scope-debug] ${JSON.stringify(payload)}`, payload);
 }
 
 function shouldProfilePluginLoader(): boolean {
