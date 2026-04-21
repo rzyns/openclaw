@@ -6,6 +6,7 @@ import {
   buildVitestRunPlans,
   listFullExtensionVitestProjectConfigs,
   shouldAcquireLocalHeavyCheckLock,
+  resolveChangedTestTargetPlan,
   resolveChangedTargetArgs,
   resolveParallelFullSuiteConcurrency,
 } from "../../scripts/test-projects.test-support.mjs";
@@ -27,6 +28,57 @@ describe("scripts/test-projects changed-target routing", () => {
         "src/utils/provider-utils.ts",
       ]),
     ).toBeNull();
+  });
+
+  it("keeps test runner implementation edits on runner tests", () => {
+    expect(
+      resolveChangedTestTargetPlan([
+        "scripts/check-changed.mjs",
+        "scripts/test-projects.test-support.d.mts",
+        "scripts/test-projects.test-support.mjs",
+        "test/scripts/changed-lanes.test.ts",
+      ]),
+    ).toEqual({
+      mode: "targets",
+      targets: ["test/scripts/changed-lanes.test.ts", "test/scripts/test-projects.test.ts"],
+    });
+  });
+
+  it("routes changed extension vitest configs to their own shard", () => {
+    expect(
+      buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
+        "test/vitest/vitest.extension-discord.config.ts",
+      ]),
+    ).toEqual([
+      {
+        config: "test/vitest/vitest.extension-discord.config.ts",
+        forwardedArgs: [],
+        includePatterns: null,
+        watchMode: false,
+      },
+    ]);
+  });
+
+  it("routes contract roots to separate contract shards", () => {
+    const plans = buildVitestRunPlans([
+      "src/channels/plugins/contracts/channel-catalog.contract.test.ts",
+      "src/plugins/contracts/loader.contract.test.ts",
+    ]);
+
+    expect(plans).toEqual([
+      {
+        config: "test/vitest/vitest.contracts-channel-surface.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["src/channels/plugins/contracts/channel-catalog.contract.test.ts"],
+        watchMode: false,
+      },
+      {
+        config: "test/vitest/vitest.contracts-plugin.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["src/plugins/contracts/loader.contract.test.ts"],
+        watchMode: false,
+      },
+    ]);
   });
 
   it("keeps the broad changed run for shared test helpers", () => {
@@ -190,27 +242,6 @@ describe("scripts/test-projects changed-target routing", () => {
         includePatterns: ["src/commands/status-overview-values.test.ts"],
         watchMode: false,
       },
-    ]);
-  });
-
-  it("keeps changed plugin-sdk allowlist files on sibling light tests plus extension tests", () => {
-    const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
-      "src/plugin-sdk/provider-entry.ts",
-    ]);
-
-    expect(plans).toEqual([
-      {
-        config: "test/vitest/vitest.unit-fast.config.ts",
-        forwardedArgs: [],
-        includePatterns: ["src/plugin-sdk/provider-entry.test.ts"],
-        watchMode: false,
-      },
-      ...listFullExtensionVitestProjectConfigs().map((config) => ({
-        config,
-        forwardedArgs: [],
-        includePatterns: null,
-        watchMode: false,
-      })),
     ]);
   });
 
@@ -558,7 +589,11 @@ describe("scripts/test-projects full-suite sharding", () => {
       "test/vitest/vitest.unit-support.config.ts",
       "test/vitest/vitest.boundary.config.ts",
       "test/vitest/vitest.tooling.config.ts",
-      "test/vitest/vitest.contracts.config.ts",
+      "test/vitest/vitest.contracts-channel-surface.config.ts",
+      "test/vitest/vitest.contracts-channel-config.config.ts",
+      "test/vitest/vitest.contracts-channel-registry.config.ts",
+      "test/vitest/vitest.contracts-channel-session.config.ts",
+      "test/vitest/vitest.contracts-plugin.config.ts",
       "test/vitest/vitest.bundled.config.ts",
       "test/vitest/vitest.infra.config.ts",
       "test/vitest/vitest.hooks.config.ts",
