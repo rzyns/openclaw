@@ -60,6 +60,7 @@ import {
   restoreRegisteredMemoryEmbeddingProviders,
 } from "./memory-embedding-providers.js";
 import {
+  clearActiveMemoryCapability,
   clearMemoryPluginState,
   getMemoryFlushPlanResolver,
   getMemoryPromptSectionBuilder,
@@ -232,6 +233,7 @@ export function clearPluginLoaderCache(): void {
   clearDetachedTaskLifecycleRuntimeRegistration();
   clearMemoryEmbeddingProviders();
   clearMemoryPluginState();
+  clearActiveMemoryCapability();
 }
 
 const defaultLogger = () => createSubsystemLogger("plugins");

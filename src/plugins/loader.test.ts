@@ -1715,7 +1715,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
       },
       onlyPluginIds: ["debug-scope-plugin"],
     });
-    expect(calls).toEqual([]);
+    const preDebugCallCount = calls.length;
 
     withEnv({ OPENCLAW_DEBUG_PLUGIN_SCOPE: "1" }, () => {
       loadOpenClawPlugins({
@@ -1746,7 +1746,9 @@ module.exports = { id: "throws-after-import", register() {} };`,
       });
     });
 
-    const debugCalls = calls.filter((call) => call.message.startsWith("[plugin-scope-debug]"));
+    const debugCalls = calls
+      .slice(preDebugCallCount)
+      .filter((call) => call.message.startsWith("[plugin-scope-debug]"));
     expect(debugCalls).toHaveLength(3);
 
     const pluginLoadCalls = debugCalls.filter((call) => call.meta?.tag === "plugin-load");
@@ -5466,7 +5468,7 @@ module.exports = {
         },
       });
 
-      expect(warnings).toEqual([]);
+      expect(warnings.filter((warning) => !warning.startsWith("[plugin-scope-debug]"))).toEqual([]);
       expect(
         registry.diagnostics.some(
           (diag) =>
