@@ -273,6 +273,7 @@ function loadRegistryFromSinglePlugin(params: {
     ...params.options,
     config: {
       plugins: {
+        slots: { memory: "none" },
         load: { paths: [params.plugin.file] },
         ...pluginConfig,
       },
@@ -2685,7 +2686,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
       },
       onlyPluginIds: ["debug-scope-plugin"],
     });
-    expect(calls).toEqual([]);
+    const preDebugCallCount = calls.length;
 
     withEnv({ OPENCLAW_DEBUG_PLUGIN_SCOPE: "1" }, () => {
       loadOpenClawPlugins({
@@ -2716,7 +2717,9 @@ module.exports = { id: "throws-after-import", register() {} };`,
       });
     });
 
-    const debugCalls = calls.filter((call) => call.message.startsWith("[plugin-scope-debug]"));
+    const debugCalls = calls
+      .slice(preDebugCallCount)
+      .filter((call) => call.message.startsWith("[plugin-scope-debug]"));
     expect(debugCalls).toHaveLength(3);
 
     const pluginLoadCalls = debugCalls.filter((call) => call.meta?.tag === "plugin-load");
@@ -3274,7 +3277,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
     expect(getDetachedTaskLifecycleRuntimeRegistration()).toBeUndefined();
   });
 
-  it("restores cached memory capability public artifacts on cache hits", async () => {
+  it("keeps the active memory capability visible across cache hits on the same scope", async () => {
     useNoBundledPlugins();
     const workspaceDir = makeTempDir();
     const absolutePath = path.join(workspaceDir, "MEMORY.md");
@@ -3336,6 +3339,90 @@ module.exports = { id: "throws-after-import", register() {} };`,
 
     const second = loadOpenClawPlugins(options);
     expect(second).toBe(first);
+    await expect(listActiveMemoryPublicArtifacts({ cfg: {} as never })).resolves.toEqual(
+      expectedArtifacts,
+    );
+  });
+
+  it("keeps the active memory capability visible after a scope that excludes the memory plugin loads", async () => {
+    // Regression: OC-40. Before the fix, the loader's per-scope clear/restore of
+    // `memoryPluginState.capability` meant that activating a scope which did not
+    // include the memory plugin would wipe the capability globally, and the
+    // memory-wiki bridge running in that scope would see `capabilityPluginId: null`.
+    useNoBundledPlugins();
+    const workspaceDir = makeTempDir();
+    const absolutePath = path.join(workspaceDir, "MEMORY.md");
+    fs.writeFileSync(absolutePath, "# Memory\n");
+    const memoryPlugin = writePlugin({
+      id: "oc40-memory-core",
+      filename: "oc40-memory-core.cjs",
+      body: `module.exports = {
+        id: "oc40-memory-core",
+        kind: "memory",
+        register(api) {
+          api.registerMemoryCapability({
+            publicArtifacts: {
+              async listArtifacts() {
+                return [{
+                  kind: "memory-root",
+                  workspaceDir: ${JSON.stringify(workspaceDir)},
+                  relativePath: "MEMORY.md",
+                  absolutePath: ${JSON.stringify(absolutePath)},
+                  agentIds: ["main"],
+                  contentType: "markdown",
+                }];
+              },
+            },
+          });
+        },
+      };`,
+    });
+    const otherPlugin = writePlugin({
+      id: "oc40-unrelated",
+      filename: "oc40-unrelated.cjs",
+      body: `module.exports = {
+        id: "oc40-unrelated",
+        register() {},
+      };`,
+    });
+
+    const sharedConfig = {
+      plugins: {
+        load: { paths: [memoryPlugin.file, otherPlugin.file] },
+        allow: ["oc40-memory-core", "oc40-unrelated"],
+        slots: { memory: "oc40-memory-core" },
+      },
+    };
+
+    const expectedArtifacts = [
+      {
+        kind: "memory-root",
+        workspaceDir,
+        relativePath: "MEMORY.md",
+        absolutePath,
+        agentIds: ["main"],
+        contentType: "markdown" as const,
+      },
+    ];
+
+    // Scope A: includes the memory plugin. Capability registers.
+    loadOpenClawPlugins({
+      workspaceDir: memoryPlugin.dir,
+      config: sharedConfig,
+      onlyPluginIds: ["oc40-memory-core"],
+    });
+    await expect(listActiveMemoryPublicArtifacts({ cfg: {} as never })).resolves.toEqual(
+      expectedArtifacts,
+    );
+
+    // Scope B: different cache key, memory plugin excluded. Before the fix this
+    // clear-on-activate would wipe the capability; after the fix the capability
+    // persists because it lives outside the scope-swapped state.
+    loadOpenClawPlugins({
+      workspaceDir: otherPlugin.dir,
+      config: sharedConfig,
+      onlyPluginIds: ["oc40-unrelated"],
+    });
     await expect(listActiveMemoryPublicArtifacts({ cfg: {} as never })).resolves.toEqual(
       expectedArtifacts,
     );
@@ -4394,7 +4481,16 @@ module.exports = { id: "throws-after-import", register() {} };`,
           );
           expect(routes).toHaveLength(1);
           expect(routes[0]?.path).toBe("/demo");
-          expect(registry.diagnostics).toEqual([]);
+          expect(
+            registry.diagnostics.filter(
+              (diag) =>
+                !(
+                  diag.level === "warn" &&
+                  diag.message ===
+                    "memory slot plugin not found or not marked as memory: memory-core"
+                ),
+            ),
+          ).toEqual([]);
         },
       },
       {
@@ -4467,7 +4563,16 @@ module.exports = { id: "throws-after-import", register() {} };`,
             (entry) => entry.pluginId === "http-route-overlap-same-auth",
           );
           expect(routes).toHaveLength(2);
-          expect(registry.diagnostics).toEqual([]);
+          expect(
+            registry.diagnostics.filter(
+              (diag) =>
+                !(
+                  diag.level === "warn" &&
+                  diag.message ===
+                    "memory slot plugin not found or not marked as memory: memory-core"
+                ),
+            ),
+          ).toEqual([]);
         },
       },
     ] as const;
@@ -6517,7 +6622,7 @@ module.exports = {
         },
       });
 
-      expect(warnings).toEqual([]);
+      expect(warnings.filter((warning) => !warning.startsWith("[plugin-scope-debug]"))).toEqual([]);
       expect(
         registry.diagnostics.some(
           (diag) =>
@@ -6556,8 +6661,10 @@ export const runtimeValue = helperValue;`,
     const registry = loadOpenClawPlugins({
       cache: false,
       workspaceDir: plugin.dir,
+      onlyPluginIds: ["source-runtime-shim"],
       config: {
         plugins: {
+          slots: { memory: "none" },
           load: { paths: [plugin.file] },
           allow: ["source-runtime-shim"],
         },

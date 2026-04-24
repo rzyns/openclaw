@@ -7,8 +7,10 @@ import {
 } from "./memory-embedding-providers.js";
 import {
   buildMemoryPromptSection,
+  getMemoryCapabilityRegistration,
   getMemoryRuntime,
   listMemoryCorpusSupplements,
+  registerMemoryCapability,
   registerMemoryCorpusSupplement,
   registerMemoryFlushPlanResolver,
   registerMemoryPromptSupplement,
@@ -216,6 +218,9 @@ describe("clearPluginLoaderCache", () => {
       id: "stale",
       create: async () => ({ provider: null }),
     });
+    registerMemoryCapability("memory-core", {
+      promptBuilder: () => ["capability prompt"],
+    });
     registerMemoryCorpusSupplement("memory-wiki", {
       search: async () => [],
       get: async () => null,
@@ -239,9 +244,10 @@ describe("clearPluginLoaderCache", () => {
       },
     });
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([
-      "stale memory section",
+      "capability prompt",
       "stale wiki supplement",
     ]);
+    expect(getMemoryCapabilityRegistration()).toMatchObject({ pluginId: "memory-core" });
     expect(listMemoryCorpusSupplements()).toHaveLength(1);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/stale.md");
     expect(getMemoryRuntime()).toBeDefined();
@@ -249,6 +255,7 @@ describe("clearPluginLoaderCache", () => {
 
     clearPluginLoaderCache();
 
+    expect(getMemoryCapabilityRegistration()).toBeUndefined();
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([]);
     expect(listMemoryCorpusSupplements()).toEqual([]);
     expect(resolveMemoryFlushPlan({})).toBeNull();
