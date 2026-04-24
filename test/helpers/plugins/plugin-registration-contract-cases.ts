@@ -104,7 +104,7 @@ export const pluginRegistrationContractCases = {
     realtimeTranscriptionProviderIds: ["openai"],
     realtimeVoiceProviderIds: ["openai"],
     mediaUnderstandingProviderIds: ["openai", "openai-codex"],
-    imageGenerationProviderIds: ["openai", "openai-codex"],
+    imageGenerationProviderIds: ["openai"],
     requireSpeechVoices: true,
     requireDescribeImages: true,
     requireGenerateImage: true,
@@ -113,7 +113,9 @@ export const pluginRegistrationContractCases = {
     pluginId: "openrouter",
     providerIds: ["openrouter"],
     mediaUnderstandingProviderIds: ["openrouter"],
+    imageGenerationProviderIds: ["openrouter"],
     requireDescribeImages: true,
+    requireGenerateImage: true,
   },
   perplexity: {
     pluginId: "perplexity",
