@@ -15,12 +15,28 @@ OpenAI provides developer APIs for GPT models. OpenClaw supports three OpenAI-fa
 
 OpenAI explicitly supports subscription OAuth usage in external tools and workflows like OpenClaw.
 
+## Quick choice
+
+| Goal                                          | Use                                                      | Notes                                                                        |
+| --------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Direct API-key billing                        | `openai/gpt-5.4`                                         | Set `OPENAI_API_KEY` or run OpenAI API-key onboarding.                       |
+| GPT-5.5 with ChatGPT/Codex subscription auth  | `openai-codex/gpt-5.5`                                   | Default PI route for Codex OAuth. Best first choice for subscription setups. |
+| GPT-5.5 with native Codex app-server behavior | `openai/gpt-5.5` plus `embeddedHarness.runtime: "codex"` | Uses the Codex app-server harness, not the public OpenAI API route.          |
+| Image generation or editing                   | `openai/gpt-image-2`                                     | Works with either `OPENAI_API_KEY` or OpenAI Codex OAuth.                    |
+
 <Note>
 GPT-5.5 is currently available in OpenClaw through subscription/OAuth routes:
 `openai-codex/gpt-5.5` with the PI runner, or `openai/gpt-5.5` with the
 Codex app-server harness. Direct API-key access for `openai/gpt-5.5` is
 supported once OpenAI enables GPT-5.5 on the public API; until then use an
 API-enabled model such as `openai/gpt-5.4` for `OPENAI_API_KEY` setups.
+</Note>
+
+<Note>
+Enabling the OpenAI plugin, or selecting an `openai-codex/*` model, does not
+enable the bundled Codex app-server plugin. OpenClaw enables that plugin only
+when you explicitly select the native Codex harness with
+`embeddedHarness.runtime: "codex"` or use a legacy `codex/*` model ref.
 </Note>
 
 ## OpenClaw feature coverage
@@ -141,6 +157,7 @@ Choose your preferred auth method and follow the setup steps.
     <Note>
     Keep using the `openai-codex` provider id for auth/profile commands. The
     `openai-codex/*` model prefix is also the explicit PI route for Codex OAuth.
+    It does not select or auto-enable the bundled Codex app-server harness.
     </Note>
 
     ### Config example
@@ -191,6 +208,14 @@ Choose your preferred auth method and follow the setup steps.
     <Note>
     Use `contextWindow` to declare native model metadata. Use `contextTokens` to limit the runtime context budget.
     </Note>
+
+    ### Catalog recovery
+
+    OpenClaw uses upstream Codex catalog metadata for `gpt-5.5` when it is
+    present. If live Codex discovery omits the `openai-codex/gpt-5.5` row while
+    the account is authenticated, OpenClaw synthesizes that OAuth model row so
+    cron, sub-agent, and configured default-model runs do not fail with
+    `Unknown model`.
 
   </Tab>
 </Tabs>

@@ -167,10 +167,6 @@ if [ "${OPENCLAW_LIVE_CODEX_HARNESS_AUTH:-codex-auth}" = "api-key" ]; then
   printf '%s\n' "$OPENAI_API_KEY" | "$NPM_CONFIG_PREFIX/bin/codex" login --with-api-key >/dev/null
 fi
 tmp_dir="$(mktemp -d)"
-cleanup() {
-  rm -rf "$tmp_dir"
-}
-trap cleanup EXIT
 source /src/scripts/lib/live-docker-stage.sh
 openclaw_live_stage_source_tree "$tmp_dir"
 mkdir -p "$tmp_dir/node_modules"
@@ -183,6 +179,20 @@ openclaw_live_prepare_staged_config
 cd "$tmp_dir"
 if [ "${OPENCLAW_LIVE_CODEX_HARNESS_USE_CI_SAFE_CODEX_CONFIG:-1}" = "1" ]; then
   node --import tsx /src/scripts/prepare-codex-ci-config.ts "$HOME/.codex/config.toml" "$tmp_dir"
+fi
+codex_preflight_log="$tmp_dir/codex-preflight.log"
+codex_preflight_token="CODEX-PREFLIGHT-OK"
+if ! "$NPM_CONFIG_PREFIX/bin/codex" exec \
+  --json \
+  --color never \
+  --skip-git-repo-check \
+  "Reply exactly: $codex_preflight_token" >"$codex_preflight_log" 2>&1; then
+  if grep -q "Failed to extract accountId from token" "$codex_preflight_log"; then
+    echo "SKIP: Codex auth cannot extract accountId from the available token; skipping live Codex harness lane."
+    exit 0
+  fi
+  cat "$codex_preflight_log" >&2
+  exit 1
 fi
 pnpm test:live ${OPENCLAW_LIVE_CODEX_TEST_FILES:-src/gateway/gateway-codex-harness.live.test.ts}
 EOF

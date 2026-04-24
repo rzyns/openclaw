@@ -17,6 +17,7 @@ reference for **what to import** and **what you can register**.
 - First plugin? Start with [Building plugins](/plugins/building-plugins).
 - Channel plugin? See [Channel plugins](/plugins/sdk-channel-plugins).
 - Provider plugin? See [Provider plugins](/plugins/sdk-provider-plugins).
+- Tool or lifecycle hook plugin? See [Plugin hooks](/plugins/hooks).
   </Tip>
 
 ## Import convention
@@ -94,6 +95,7 @@ methods:
 | `api.registerHook(events, handler, opts?)`      | Event hook                              |
 | `api.registerHttpRoute(params)`                 | Gateway HTTP endpoint                   |
 | `api.registerGatewayMethod(name, handler)`      | Gateway RPC method                      |
+| `api.registerGatewayDiscoveryService(service)`  | Local Gateway discovery advertiser      |
 | `api.registerCli(registrar, opts?)`             | CLI subcommand                          |
 | `api.registerService(service)`                  | Background service                      |
 | `api.registerInteractiveHandler(registration)`  | Interactive handler                     |
@@ -118,6 +120,32 @@ and they must declare `contracts.embeddedExtensionFactories: ["pi"]` in
 `openclaw.plugin.json`. Keep normal OpenClaw plugin hooks for everything that
 does not require that lower-level seam.
 </Accordion>
+
+### Gateway discovery registration
+
+`api.registerGatewayDiscoveryService(...)` lets a plugin advertise the active
+Gateway on a local discovery transport such as mDNS/Bonjour. OpenClaw calls the
+service during Gateway startup when local discovery is enabled, passes the
+current Gateway ports and non-secret TXT hint data, and calls the returned
+`stop` handler during Gateway shutdown.
+
+```typescript
+api.registerGatewayDiscoveryService({
+  id: "my-discovery",
+  async advertise(ctx) {
+    const handle = await startMyAdvertiser({
+      gatewayPort: ctx.gatewayPort,
+      tls: ctx.gatewayTlsEnabled,
+      displayName: ctx.machineDisplayName,
+    });
+    return { stop: () => handle.stop() };
+  },
+});
+```
+
+Gateway discovery plugins must not treat advertised TXT values as secrets or
+authentication. Discovery is a routing hint; Gateway auth and TLS pinning still
+own trust.
 
 ### CLI registration metadata
 
@@ -201,6 +229,9 @@ AI CLI backend such as `codex-cli`.
 | -------------------------------------------- | ----------------------------- |
 | `api.on(hookName, handler, opts?)`           | Typed lifecycle hook          |
 | `api.onConversationBindingResolved(handler)` | Conversation binding callback |
+
+See [Plugin hooks](/plugins/hooks) for examples, common hook names, and guard
+semantics.
 
 ### Hook decision semantics
 
