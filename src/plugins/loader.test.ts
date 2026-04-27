@@ -449,6 +449,7 @@ function expectPluginSourcePrecedence(
     expectedDisabledOrigin: string;
     label: string;
     expectedDisabledError?: string;
+    expectDuplicateWarning?: boolean;
   },
 ) {
   const entries = registry.plugins.filter((entry) => entry.id === scenario.pluginId);
@@ -459,15 +460,13 @@ function expectPluginSourcePrecedence(
   const expectedWarning =
     scenario.expectedDisabledError ??
     `${scenario.expectedDisabledOrigin} plugin will be overridden by ${scenario.expectedLoadedOrigin} plugin`;
-  expect(
-    registry.diagnostics.some(
-      (diag) =>
-        diag.level === "warn" &&
-        diag.pluginId === scenario.pluginId &&
-        diag.message.includes(expectedWarning),
-    ),
-    scenario.label,
-  ).toBe(true);
+  const hasDuplicateWarning = registry.diagnostics.some(
+    (diag) =>
+      diag.level === "warn" &&
+      diag.pluginId === scenario.pluginId &&
+      diag.message.includes(expectedWarning),
+  );
+  expect(hasDuplicateWarning, scenario.label).toBe(scenario.expectDuplicateWarning ?? true);
 }
 
 function expectPluginOriginAndStatus(params: {
@@ -6966,6 +6965,7 @@ module.exports = {
         expectedLoadedOrigin: "global",
         expectedDisabledOrigin: "bundled",
         expectedDisabledError: "overridden by global plugin",
+        expectDuplicateWarning: false,
         assert: expectPluginSourcePrecedence,
       },
     ] as const;

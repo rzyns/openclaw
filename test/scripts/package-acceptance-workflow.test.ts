@@ -51,6 +51,9 @@ describe("package acceptance workflow", () => {
     expect(workflow).toContain(
       "package_label: openclaw@${{ needs.resolve_package.outputs.package_version }}",
     );
+    expect(workflow).toContain(
+      "harness_ref: ${{ inputs.source == 'ref' && inputs.package_ref || inputs.workflow_ref }}",
+    );
   });
 });
 
@@ -87,12 +90,27 @@ describe("package artifact reuse", () => {
     expect(workflow).not.toContain("cache-to: type=gha,mode=max,scope=docker-e2e");
   });
 
+  it("shards broad native live tests instead of one serial live-all job", () => {
+    const workflow = readFileSync(LIVE_E2E_WORKFLOW, "utf8");
+
+    expect(workflow).not.toContain("suite_id: live-all");
+    expect(workflow).not.toContain("command: pnpm test:live\n");
+    expect(workflow).toContain("suite_id: native-live-src-agents");
+    expect(workflow).toContain("command: node scripts/test-live-shard.mjs native-live-src-agents");
+    expect(workflow).toContain("suite_id: native-live-src-gateway");
+    expect(workflow).toContain("suite_id: native-live-extensions-a-k");
+    expect(workflow).toContain("suite_id: native-live-extensions-l-z");
+    expect(workflow).toContain("if: matrix.needs_ffmpeg");
+  });
+
   it("allows the Telegram lane to run from reusable package acceptance artifacts", () => {
     const workflow = readFileSync(NPM_TELEGRAM_WORKFLOW, "utf8");
 
     expect(workflow).toContain("workflow_call:");
     expect(workflow).toContain("package_artifact_name:");
     expect(workflow).toContain("Download package-under-test artifact");
+    expect(workflow).toContain("harness_ref:");
+    expect(workflow).toContain("ref: ${{ inputs.harness_ref || github.sha }}");
     expect(workflow).toContain("OPENCLAW_NPM_TELEGRAM_PACKAGE_TGZ");
     expect(workflow).toContain("provider_mode:");
     expect(workflow).toContain("provider_mode must be mock-openai or live-frontier");
@@ -154,6 +172,7 @@ describe("package artifact reuse", () => {
     expect(workflow).toContain(
       'gh workflow run npm-telegram-beta-e2e.yml --ref "$CHILD_WORKFLOW_REF" "${args[@]}"',
     );
+    expect(workflow).toContain('-f harness_ref="$TARGET_SHA"');
     expect(workflow).not.toContain("workflow_ref:");
     expect(workflow).not.toContain("inputs.workflow_ref");
   });
