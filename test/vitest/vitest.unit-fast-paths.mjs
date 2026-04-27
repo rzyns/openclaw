@@ -5,6 +5,7 @@ import {
   commandsLightTestFiles,
 } from "./vitest.commands-light-paths.mjs";
 import { pluginSdkLightSourceFiles, pluginSdkLightTestFiles } from "./vitest.plugin-sdk-paths.mjs";
+import { boundaryTestFiles } from "./vitest.unit-paths.mjs";
 
 const normalizeRepoPath = (value) => value.replaceAll("\\", "/");
 
@@ -51,6 +52,36 @@ const unitFastCandidateGlobs = [
   "src/wizard/**/*.test.ts",
   "test/**/*.test.ts",
 ];
+export const forcedUnitFastTestFiles = [
+  "packages/memory-host-sdk/src/host/post-json.test.ts",
+  "src/acp/client.test.ts",
+  "src/acp/control-plane/manager.test.ts",
+  "src/acp/persistent-bindings.test.ts",
+  "src/acp/server.startup.test.ts",
+  "src/browser-lifecycle-cleanup.test.ts",
+  "src/crestodian/overview.test.ts",
+  "src/crestodian/operations.test.ts",
+  "src/flows/channel-setup.test.ts",
+  "src/context-engine/context-engine.test.ts",
+  "src/i18n/registry.test.ts",
+  "src/install-sh-version.test.ts",
+  "src/memory-host-sdk/host/internal.test.ts",
+  "src/memory-host-sdk/host/post-json.test.ts",
+  "src/memory-host-sdk/host/session-files.test.ts",
+  "src/node-host/invoke-system-run-plan.test.ts",
+  "src/node-host/invoke-system-run.test.ts",
+  "src/pairing/pairing-store.test.ts",
+  "src/plugin-sdk/memory-host-events.test.ts",
+  "src/security/audit-extra.async.test.ts",
+  "src/security/audit-workspace-skill-escape.test.ts",
+  "src/security/external-content.test.ts",
+  "src/security/fix.test.ts",
+  "src/security/skill-scanner.test.ts",
+  "src/security/windows-acl.test.ts",
+  "src/trajectory/export.test.ts",
+  "src/version.test.ts",
+];
+const forcedUnitFastTestFileSet = new Set(forcedUnitFastTestFiles);
 const unitFastCandidateExactFiles = [...pluginSdkLightTestFiles, ...commandsLightTestFiles];
 const broadUnitFastCandidateGlobs = [
   "src/**/*.test.ts",
@@ -71,6 +102,7 @@ const broadUnitFastCandidateSkipGlobs = [
   "src/plugin-sdk/browser-subpaths.test.ts",
   "src/security/**/*.test.ts",
   "src/secrets/**/*.test.ts",
+  ...boundaryTestFiles,
 ];
 
 const disqualifyingPatterns = [
@@ -84,7 +116,7 @@ const disqualifyingPatterns = [
   },
   {
     code: "module-mocking-helper",
-    pattern: /runtime-module-mocks/u,
+    pattern: /(?:runtime-module-mocks|plugins-cli-test-helpers)/u,
   },
   {
     code: "vitest-mock-api",
@@ -169,9 +201,9 @@ export function collectUnitFastTestCandidates(cwd = process.cwd()) {
         matchesAnyGlob(file, unitFastCandidateGlobs) &&
         !matchesAnyGlob(file, broadUnitFastCandidateSkipGlobs),
     );
-  return [...new Set([...discovered, ...unitFastCandidateExactFiles])].toSorted((a, b) =>
-    a.localeCompare(b),
-  );
+  return [
+    ...new Set([...discovered, ...unitFastCandidateExactFiles, ...forcedUnitFastTestFiles]),
+  ].toSorted((a, b) => a.localeCompare(b));
 }
 
 export function collectBroadUnitFastTestCandidates(cwd = process.cwd()) {
@@ -183,9 +215,9 @@ export function collectBroadUnitFastTestCandidates(cwd = process.cwd()) {
         matchesAnyGlob(file, broadUnitFastCandidateGlobs) &&
         !matchesAnyGlob(file, broadUnitFastCandidateSkipGlobs),
     );
-  return [...new Set([...discovered, ...unitFastCandidateExactFiles])].toSorted((a, b) =>
-    a.localeCompare(b),
-  );
+  return [
+    ...new Set([...discovered, ...unitFastCandidateExactFiles, ...forcedUnitFastTestFiles]),
+  ].toSorted((a, b) => a.localeCompare(b));
 }
 
 export function collectUnitFastTestFileAnalysis(cwd = process.cwd(), options = {}) {
@@ -206,9 +238,11 @@ export function collectUnitFastTestFileAnalysis(cwd = process.cwd(), options = {
       };
     }
     const reasons = classifyUnitFastTestFileContent(source);
+    const forced = forcedUnitFastTestFileSet.has(file);
     return {
       file,
-      unitFast: reasons.length === 0,
+      unitFast: forced || reasons.length === 0,
+      forced,
       reasons,
     };
   });

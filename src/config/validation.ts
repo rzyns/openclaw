@@ -4,6 +4,7 @@ import { CHANNEL_IDS, normalizeChatChannelId } from "../channels/ids.js";
 import { withBundledPluginAllowlistCompat } from "../plugins/bundled-compat.js";
 import {
   normalizePluginsConfig,
+  normalizePluginId,
   resolveEffectivePluginActivationState,
   resolveMemorySlotDecision,
 } from "../plugins/config-state.js";
@@ -12,11 +13,10 @@ import {
   collectRelevantDoctorPluginIdsForTouchedPaths,
   listPluginDoctorLegacyConfigRules,
 } from "../plugins/doctor-contract-registry.js";
-import { resolveManifestCommandAliasOwner } from "../plugins/manifest-command-aliases.runtime.js";
-import {
-  loadPluginManifestRegistry,
-  resolveManifestContractPluginIds,
-} from "../plugins/manifest-registry.js";
+import { loadInstalledPluginIndexInstallRecordsSync } from "../plugins/installed-plugin-index-record-reader.js";
+import { resolveManifestCommandAliasOwnerInRegistry } from "../plugins/manifest-command-aliases.js";
+import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
+import { loadPluginManifestRegistryForPluginRegistry } from "../plugins/plugin-registry.js";
 import { validateJsonSchemaValue } from "../plugins/schema-validator.js";
 import { hasKind } from "../plugins/slots.js";
 import { collectLegacySecretRefEnvMarkerCandidates } from "../secrets/legacy-secretref-env-marker.js";
@@ -760,7 +760,7 @@ function validateConfigObjectWithPluginsBase(
   };
 
   type RegistryInfo = {
-    registry: ReturnType<typeof loadPluginManifestRegistry>;
+    registry: PluginManifestRegistry;
     knownIds?: Set<string>;
     overriddenPluginIds?: Set<string>;
     normalizedPlugins?: ReturnType<typeof normalizePluginsConfig>;
@@ -788,24 +788,27 @@ function validateConfigObjectWithPluginsBase(
       return compatPluginIds;
     }
     const workspaceDir = resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
+    const registry = loadPluginManifestRegistryForPluginRegistry({
+      config,
+      workspaceDir: workspaceDir ?? undefined,
+      env: opts.env,
+      includeDisabled: true,
+    });
     const overriddenBundledPluginIds = new Set(
-      loadPluginManifestRegistry({
-        config,
-        workspaceDir: workspaceDir ?? undefined,
-        env: opts.env,
-      })
-        .diagnostics.filter((diag) => diag.message.includes("duplicate plugin id detected"))
+      registry.diagnostics
+        .filter((diag) => diag.message.includes("duplicate plugin id detected"))
         .map((diag) => diag.pluginId)
         .filter((pluginId): pluginId is string => typeof pluginId === "string" && pluginId !== ""),
     );
     compatPluginIds = new Set(
-      resolveManifestContractPluginIds({
-        contract: "webSearchProviders",
-        origin: "bundled",
-        config,
-        workspaceDir: workspaceDir ?? undefined,
-        env: opts.env,
-      }).filter((pluginId) => !overriddenBundledPluginIds.has(pluginId)),
+      registry.plugins
+        .filter(
+          (plugin) =>
+            plugin.origin === "bundled" &&
+            (plugin.contracts?.webSearchProviders?.length ?? 0) > 0 &&
+            !overriddenBundledPluginIds.has(plugin.id),
+        )
+        .map((plugin) => plugin.id),
     );
     return compatPluginIds;
   };
@@ -838,10 +841,11 @@ function validateConfigObjectWithPluginsBase(
       effectiveConfig,
       resolveDefaultAgentId(effectiveConfig),
     );
-    const registry = loadPluginManifestRegistry({
+    const registry = loadPluginManifestRegistryForPluginRegistry({
       config: effectiveConfig,
       workspaceDir: workspaceDir ?? undefined,
       env: opts.env,
+      includeDisabled: true,
     });
 
     for (const diag of registry.diagnostics) {
@@ -924,6 +928,54 @@ function validateConfigObjectWithPluginsBase(
   let channelsCloned = false;
   let pluginsCloned = false;
   let pluginEntriesCloned = false;
+  let installedPluginRecordIds: Set<string> | undefined;
+
+  const ensureInstalledPluginRecordIds = (): Set<string> => {
+    if (installedPluginRecordIds) {
+      return installedPluginRecordIds;
+    }
+    try {
+      installedPluginRecordIds = new Set(
+        Object.keys(loadInstalledPluginIndexInstallRecordsSync({ env: opts.env })).map(
+          normalizePluginId,
+        ),
+      );
+    } catch {
+      installedPluginRecordIds = new Set();
+    }
+    return installedPluginRecordIds;
+  };
+
+  const hasStalePluginEvidenceForUnknownChannel = (channelId: string): boolean => {
+    const normalizedChannelId = normalizePluginId(channelId);
+    if (!normalizedChannelId || ensureKnownIds().has(normalizedChannelId)) {
+      return false;
+    }
+    const pluginConfig = config.plugins;
+    if (
+      Array.isArray(pluginConfig?.allow) &&
+      pluginConfig.allow.some((pluginId) => normalizePluginId(pluginId) === normalizedChannelId)
+    ) {
+      return true;
+    }
+    if (
+      isRecord(pluginConfig?.entries) &&
+      Object.keys(pluginConfig.entries).some(
+        (pluginId) => normalizePluginId(pluginId) === normalizedChannelId,
+      )
+    ) {
+      return true;
+    }
+    if (
+      isRecord(pluginConfig?.installs) &&
+      Object.keys(pluginConfig.installs).some(
+        (pluginId) => normalizePluginId(pluginId) === normalizedChannelId,
+      )
+    ) {
+      return true;
+    }
+    return ensureInstalledPluginRecordIds().has(normalizedChannelId);
+  };
 
   const replaceChannelConfig = (channelId: string, nextValue: unknown) => {
     if (!channelsCloned) {
@@ -981,10 +1033,18 @@ function validateConfigObjectWithPluginsBase(
         }
       }
       if (!allowedChannels.has(trimmed)) {
-        issues.push({
+        const issue = {
           path: `channels.${trimmed}`,
           message: `unknown channel id: ${trimmed}`,
-        });
+        };
+        if (hasStalePluginEvidenceForUnknownChannel(trimmed)) {
+          warnings.push({
+            ...issue,
+            message: `${issue.message} (stale channel plugin config ignored; run openclaw doctor --fix to remove stale config, or install the plugin)`,
+          });
+        } else {
+          issues.push(issue);
+        }
         continue;
       }
 
@@ -1117,7 +1177,7 @@ function validateConfigObjectWithPluginsBase(
       continue;
     }
     if (!knownIds.has(pluginId)) {
-      const commandAlias = resolveManifestCommandAliasOwner({
+      const commandAlias = resolveManifestCommandAliasOwnerInRegistry({
         command: pluginId,
         registry,
       });

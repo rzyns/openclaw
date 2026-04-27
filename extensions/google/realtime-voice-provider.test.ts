@@ -1,3 +1,4 @@
+import { REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ } from "openclaw/plugin-sdk/realtime-voice";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildGoogleRealtimeVoiceProvider } from "./realtime-voice-provider.js";
 
@@ -77,6 +78,9 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
             temperature: 0.4,
             silenceDurationMs: 700,
             startSensitivity: "high",
+            activityHandling: "no_interruption",
+            turnCoverage: "turn_includes_only_activity",
+            automaticActivityDetectionDisabled: false,
           },
         },
       },
@@ -92,6 +96,9 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
       silenceDurationMs: 700,
       startSensitivity: "high",
       endSensitivity: undefined,
+      activityHandling: "no-interruption",
+      turnCoverage: "only-activity",
+      automaticActivityDetectionDisabled: false,
       enableAffectiveDialog: undefined,
       thinkingLevel: undefined,
       thinkingBudget: undefined,
@@ -107,6 +114,9 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
         voice: "Kore",
         temperature: 0.3,
         startSensitivity: "low",
+        endSensitivity: "low",
+        activityHandling: "no-interruption",
+        turnCoverage: "only-activity",
       },
       instructions: "Speak briefly.",
       tools: [
@@ -120,6 +130,18 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
               query: { type: "string" },
             },
             required: ["query"],
+          },
+        },
+        {
+          type: "function",
+          name: "openclaw_agent_consult",
+          description: "Ask OpenClaw",
+          parameters: {
+            type: "object",
+            properties: {
+              question: { type: "string" },
+            },
+            required: ["question"],
           },
         },
       ],
@@ -144,6 +166,14 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
           },
         },
         outputAudioTranscription: {},
+        realtimeInputConfig: {
+          activityHandling: "NO_INTERRUPTION",
+          automaticActivityDetection: {
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+          },
+          turnCoverage: "TURN_INCLUDES_ONLY_ACTIVITY",
+        },
         tools: [
           {
             functionDeclarations: [
@@ -157,6 +187,18 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
                   },
                   required: ["query"],
                 },
+              },
+              {
+                name: "openclaw_agent_consult",
+                description: "Ask OpenClaw",
+                parametersJsonSchema: {
+                  type: "object",
+                  properties: {
+                    question: { type: "string" },
+                  },
+                  required: ["question"],
+                },
+                behavior: "NON_BLOCKING",
               },
             ],
           },
@@ -240,6 +282,53 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({ audioStreamEnd: true });
   });
 
+  it("accepts PCM16 24 kHz audio without the telephony mu-law hop", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const bridge = provider.createBridge({
+      providerConfig: { apiKey: "gemini-key" },
+      audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+
+    await bridge.connect();
+    lastConnectParams().callbacks.onopen();
+    lastConnectParams().callbacks.onmessage({ setupComplete: { sessionId: "session-1" } });
+
+    bridge.sendAudio(Buffer.alloc(480));
+
+    expect(session.sendRealtimeInput).toHaveBeenCalledWith({
+      audio: {
+        data: expect.any(String),
+        mimeType: "audio/pcm;rate=16000",
+      },
+    });
+    const sent = Buffer.from(session.sendRealtimeInput.mock.calls[0]?.[0].audio.data, "base64");
+    expect(sent).toHaveLength(320);
+  });
+
+  it("can disable automatic VAD for manual activity signaling experiments", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const bridge = provider.createBridge({
+      providerConfig: {
+        apiKey: "gemini-key",
+        automaticActivityDetectionDisabled: true,
+      },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+
+    await bridge.connect();
+
+    expect(lastConnectParams().config).toMatchObject({
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: true,
+        },
+      },
+    });
+  });
+
   it("sends text prompts as ordered client turns", async () => {
     const provider = buildGoogleRealtimeVoiceProvider();
     const bridge = provider.createBridge({
@@ -290,6 +379,38 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
     expect(onAudio).toHaveBeenCalledTimes(1);
     expect(onAudio.mock.calls[0]?.[0]).toBeInstanceOf(Buffer);
     expect(onAudio.mock.calls[0]?.[0]).toHaveLength(80);
+  });
+
+  it("can keep Google PCM output as PCM16 24 kHz audio", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const onAudio = vi.fn();
+    const bridge = provider.createBridge({
+      providerConfig: { apiKey: "gemini-key" },
+      audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+      onAudio,
+      onClearAudio: vi.fn(),
+    });
+    const pcm24k = Buffer.alloc(480);
+
+    await bridge.connect();
+    lastConnectParams().callbacks.onmessage({
+      setupComplete: { sessionId: "session-1" },
+      serverContent: {
+        modelTurn: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: "audio/L16;codec=pcm;rate=24000",
+                data: pcm24k.toString("base64"),
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(onAudio).toHaveBeenCalledTimes(1);
+    expect(onAudio.mock.calls[0]?.[0]).toEqual(pcm24k);
   });
 
   it("does not forward Google thought text as assistant transcript", async () => {
@@ -346,6 +467,119 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
       functionResponses: [
         {
           id: "call-1",
+          name: "lookup",
+          response: { result: "ok" },
+        },
+      ],
+    });
+  });
+
+  it("keeps Google Live consult calls open after continuing tool responses", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const bridge = provider.createBridge({
+      providerConfig: { apiKey: "gemini-key" },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+      onToolCall: vi.fn(),
+    });
+
+    await bridge.connect();
+    lastConnectParams().callbacks.onmessage({
+      setupComplete: { sessionId: "session-1" },
+      toolCall: {
+        functionCalls: [
+          { id: "consult-call", name: "openclaw_agent_consult", args: { prompt: "hi" } },
+        ],
+      },
+    });
+
+    bridge.submitToolResult(
+      "consult-call",
+      { status: "working", message: "Tell the participant you are checking." },
+      { willContinue: true },
+    );
+    bridge.submitToolResult("consult-call", { text: "The meeting starts at 3." });
+
+    expect(session.sendToolResponse).toHaveBeenNthCalledWith(1, {
+      functionResponses: [
+        {
+          id: "consult-call",
+          name: "openclaw_agent_consult",
+          scheduling: "WHEN_IDLE",
+          willContinue: true,
+          response: { status: "working", message: "Tell the participant you are checking." },
+        },
+      ],
+    });
+    expect(session.sendToolResponse).toHaveBeenNthCalledWith(2, {
+      functionResponses: [
+        {
+          id: "consult-call",
+          name: "openclaw_agent_consult",
+          scheduling: "WHEN_IDLE",
+          response: { text: "The meeting starts at 3." },
+        },
+      ],
+    });
+  });
+
+  it("does not send malformed Live API tool responses without a matching call name", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const onError = vi.fn();
+    const bridge = provider.createBridge({
+      providerConfig: { apiKey: "gemini-key" },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+      onError,
+    });
+
+    await bridge.connect();
+
+    bridge.submitToolResult("missing-call", { result: "ok" });
+
+    expect(session.sendToolResponse).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Google Live function response is missing a matching function call for missing-call",
+      }),
+    );
+  });
+
+  it("reports Google Live tool response send failures without losing the call name", async () => {
+    const provider = buildGoogleRealtimeVoiceProvider();
+    const onError = vi.fn();
+    const bridge = provider.createBridge({
+      providerConfig: { apiKey: "gemini-key" },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+      onError,
+    });
+
+    await bridge.connect();
+    lastConnectParams().callbacks.onmessage({
+      setupComplete: { sessionId: "session-1" },
+      toolCall: {
+        functionCalls: [{ id: "call-1", name: "lookup", args: { query: "hi" } }],
+      },
+    });
+
+    const sendError = new Error("SDK send failed");
+    session.sendToolResponse.mockImplementationOnce(() => {
+      throw sendError;
+    });
+
+    bridge.submitToolResult("call-1", ["retryable"]);
+
+    expect(onError).toHaveBeenCalledWith(sendError);
+
+    bridge.submitToolResult("call-1", { result: "ok" });
+
+    expect(session.sendToolResponse).toHaveBeenLastCalledWith({
+      functionResponses: [
+        {
+          id: "call-1",
+          name: "lookup",
           response: { result: "ok" },
         },
       ],

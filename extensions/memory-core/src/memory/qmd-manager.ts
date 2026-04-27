@@ -210,7 +210,7 @@ type ManagedCollection = {
   kind: "memory" | "custom" | "sessions";
 };
 
-type QmdManagerMode = "full" | "status";
+type QmdManagerMode = "full" | "status" | "cli";
 type QmdManagerRuntimeConfig = {
   workspaceDir: string;
   syncSettings: ReturnType<typeof resolveMemorySearchSyncConfig>;
@@ -333,7 +333,7 @@ export class QmdMemoryManager implements MemorySearchManager {
   private attemptedNullByteCollectionRepair = false;
   private attemptedDuplicateDocumentRepair = false;
   private readonly sessionWarm = new Set<string>();
-  private collectionPatternFlag: QmdCollectionPatternFlag | null = "--glob";
+  private collectionPatternFlag: QmdCollectionPatternFlag | null = "--mask";
 
   private constructor(params: {
     agentId: string;
@@ -414,6 +414,10 @@ export class QmdMemoryManager implements MemorySearchManager {
     await this.symlinkSharedModels();
 
     await this.ensureCollections();
+    if (mode === "cli") {
+      return;
+    }
+
     this.ensureWatcher();
 
     if (this.qmd.update.onBoot) {

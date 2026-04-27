@@ -1,14 +1,17 @@
 import type { ExternalizedBundledPluginBridge } from "../plugins/externalized-bundled-plugins.js";
 import { readPersistedInstalledPluginIndex } from "../plugins/installed-plugin-index-store.js";
 import type { InstalledPluginIndexRecord } from "../plugins/installed-plugin-index.js";
+import { loadPluginManifestRegistryForInstalledIndex } from "../plugins/manifest-registry-installed.js";
+import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 
 function buildBridgeFromPersistedBundledRecord(
   record: InstalledPluginIndexRecord,
+  manifest?: PluginManifestRecord,
 ): ExternalizedBundledPluginBridge | null {
   // Relocation is derived from the previous persisted registry, not a hardcoded
   // table. A plugin moving from bundled to npm keeps the same plugin id; the old
   // registry row is the proof that this user actually had it bundled/enabled.
-  if (record.origin !== "bundled" || record.enabled === false) {
+  if (record.origin !== "bundled" || !record.enabled) {
     return null;
   }
   const npmSpec = record.packageInstall?.npm?.spec;
@@ -19,8 +22,8 @@ function buildBridgeFromPersistedBundledRecord(
     bundledPluginId: record.pluginId,
     pluginId: record.pluginId,
     npmSpec,
-    ...(record.enabledByDefault === true ? { enabledByDefault: true } : {}),
-    channelIds: record.contributions.channels,
+    ...(record.enabledByDefault ? { enabledByDefault: true } : {}),
+    ...(manifest?.channels.length ? { channelIds: manifest.channels } : {}),
   };
 }
 
@@ -35,8 +38,18 @@ export async function listPersistedBundledPluginLocationBridges(options: {
   if (!index) {
     return [];
   }
+  const manifestRegistry = loadPluginManifestRegistryForInstalledIndex({
+    index,
+    workspaceDir: options.workspaceDir,
+    env: options.env,
+    includeDisabled: true,
+  });
+  const manifestByPluginId = new Map(manifestRegistry.plugins.map((plugin) => [plugin.id, plugin]));
   return index.plugins.flatMap((record) => {
-    const bridge = buildBridgeFromPersistedBundledRecord(record);
+    const bridge = buildBridgeFromPersistedBundledRecord(
+      record,
+      manifestByPluginId.get(record.pluginId),
+    );
     return bridge ? [bridge] : [];
   });
 }

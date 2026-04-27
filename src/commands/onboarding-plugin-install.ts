@@ -116,6 +116,18 @@ function addPluginLoadPath(cfg: OpenClawConfig, pluginPath: string): OpenClawCon
   };
 }
 
+function pathsReferToSameDirectory(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  const realLeft = resolveRealDirectory(left);
+  const realRight = resolveRealDirectory(right);
+  return Boolean(realLeft && realRight && realLeft === realRight);
+}
+
 function formatPortableLocalPath(localPath: string, workspaceDir?: string): string | undefined {
   const bases = [workspaceDir, process.cwd()].filter((entry): entry is string => Boolean(entry));
   for (const base of bases) {
@@ -135,20 +147,21 @@ function formatPortableLocalPath(localPath: string, workspaceDir?: string): stri
   return undefined;
 }
 
-function recordLocalPluginInstall(params: {
+async function recordLocalPluginInstall(params: {
   cfg: OpenClawConfig;
   entry: OnboardingPluginInstallEntry;
   localPath: string;
   npmSpec?: string | null;
   workspaceDir?: string;
-}): OpenClawConfig {
+}): Promise<OpenClawConfig> {
   const sourcePath = formatPortableLocalPath(params.localPath, params.workspaceDir);
-  return recordPluginInstall(params.cfg, {
+  const install = {
     pluginId: params.entry.pluginId,
     source: "path",
     ...(sourcePath ? { sourcePath } : {}),
     ...(params.npmSpec ? { spec: params.npmSpec } : {}),
-  });
+  } as const;
+  return recordPluginInstall(params.cfg, install);
 }
 
 function resolveLocalPath(params: {
@@ -421,6 +434,7 @@ export async function ensureOnboardingPluginInstalled(params: {
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
   workspaceDir?: string;
+  promptInstall?: boolean;
 }): Promise<OnboardingPluginInstallResult> {
   const { entry, prompter, runtime, workspaceDir } = params;
   let next = params.cfg;
@@ -441,12 +455,15 @@ export async function ensureOnboardingPluginInstalled(params: {
     bundledLocalPath,
     hasNpmSpec: Boolean(npmSpec),
   });
-  const choice = await promptInstallChoice({
-    entry,
-    localPath,
-    defaultChoice,
-    prompter,
-  });
+  const choice =
+    params.promptInstall === false
+      ? defaultChoice
+      : await promptInstallChoice({
+          entry,
+          localPath,
+          defaultChoice,
+          prompter,
+        });
 
   if (choice === "skip") {
     return {
@@ -473,8 +490,16 @@ export async function ensureOnboardingPluginInstalled(params: {
         status: "failed",
       };
     }
+    if (pathsReferToSameDirectory(localPath, bundledLocalPath)) {
+      return {
+        cfg: enableResult.config,
+        installed: true,
+        pluginId: entry.pluginId,
+        status: "installed",
+      };
+    }
     next = addPluginLoadPath(enableResult.config, localPath);
-    next = recordLocalPluginInstall({ cfg: next, entry, localPath, npmSpec, workspaceDir });
+    next = await recordLocalPluginInstall({ cfg: next, entry, localPath, npmSpec, workspaceDir });
     return {
       cfg: next,
       installed: true,
@@ -544,14 +569,15 @@ export async function ensureOnboardingPluginInstalled(params: {
       };
     }
     next = enableResult.config;
-    next = recordPluginInstall(next, {
+    const install = {
       pluginId: result.pluginId,
       source: "npm",
       spec: npmSpec,
       installPath: result.targetDir,
       version: result.version,
       ...buildNpmResolutionInstallFields(result.npmResolution),
-    });
+    } as const;
+    next = recordPluginInstall(next, install);
     return {
       cfg: next,
       installed: true,
@@ -589,8 +615,16 @@ export async function ensureOnboardingPluginInstalled(params: {
           status: "failed",
         };
       }
+      if (pathsReferToSameDirectory(localPath, bundledLocalPath)) {
+        return {
+          cfg: enableResult.config,
+          installed: true,
+          pluginId: entry.pluginId,
+          status: "installed",
+        };
+      }
       next = addPluginLoadPath(enableResult.config, localPath);
-      next = recordLocalPluginInstall({ cfg: next, entry, localPath, npmSpec, workspaceDir });
+      next = await recordLocalPluginInstall({ cfg: next, entry, localPath, npmSpec, workspaceDir });
       return {
         cfg: next,
         installed: true,

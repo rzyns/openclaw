@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  onInternalDiagnosticEvent,
   onDiagnosticEvent,
   resetDiagnosticEventsForTest,
   type DiagnosticEventPayload,
@@ -90,7 +91,7 @@ describe("before_tool_call loop detection behavior", () => {
     run: (emitted: DiagnosticEventPayload[], flush: () => Promise<void>) => Promise<void>,
   ) {
     const emitted: DiagnosticEventPayload[] = [];
-    const stop = onDiagnosticEvent((evt) => {
+    const stop = onInternalDiagnosticEvent((evt) => {
       if (evt.type.startsWith("tool.execution.")) {
         emitted.push(evt);
       }
@@ -244,6 +245,32 @@ describe("before_tool_call loop detection behavior", () => {
     ).rejects.toThrow("global circuit breaker");
   });
 
+  it("does not carry loop history across run ids", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "same output" }],
+      details: { ok: true },
+    });
+    const params = { path: "/tmp/file" };
+    const firstRunTool = wrapToolWithBeforeToolCallHook({ name: "read", execute } as any, {
+      ...enabledLoopDetectionContext,
+      runId: "heartbeat-1",
+    });
+    const secondRunTool = wrapToolWithBeforeToolCallHook({ name: "read", execute } as any, {
+      ...enabledLoopDetectionContext,
+      runId: "heartbeat-2",
+    });
+
+    for (let i = 0; i < GLOBAL_CIRCUIT_BREAKER_THRESHOLD; i += 1) {
+      await expect(
+        firstRunTool.execute(`old-run-${i}`, params, undefined, undefined),
+      ).resolves.toBeDefined();
+    }
+
+    await expect(
+      secondRunTool.execute("new-run-0", params, undefined, undefined),
+    ).resolves.toBeDefined();
+  });
+
   it("coalesces repeated generic warning events into threshold buckets", async () => {
     await withToolLoopEvents(
       async (emitted) => {
@@ -391,7 +418,12 @@ describe("before_tool_call loop detection behavior", () => {
         paramsSummary: {
           kind: "object",
         },
-        trace,
+        trace: {
+          traceId: trace.traceId,
+          parentSpanId: trace.spanId,
+          spanId: expect.any(String),
+          traceFlags: trace.traceFlags,
+        },
       });
       expect(emitted[0]?.trace).not.toBe(trace);
       expect(Object.isFrozen(emitted[0]?.trace)).toBe(true);

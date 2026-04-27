@@ -82,7 +82,7 @@ public struct HelloOk: Codable, Sendable {
     public let features: [String: AnyCodable]
     public let snapshot: Snapshot
     public let canvashosturl: String?
-    public let auth: [String: AnyCodable]?
+    public let auth: [String: AnyCodable]
     public let policy: [String: AnyCodable]
 
     public init(
@@ -92,7 +92,7 @@ public struct HelloOk: Codable, Sendable {
         features: [String: AnyCodable],
         snapshot: Snapshot,
         canvashosturl: String?,
-        auth: [String: AnyCodable]?,
+        auth: [String: AnyCodable],
         policy: [String: AnyCodable])
     {
         self.type = type
@@ -595,11 +595,14 @@ public struct AgentParams: Codable, Sendable {
     public let besteffortdeliver: Bool?
     public let lane: String?
     public let cleanupbundlemcponrunend: Bool?
+    public let modelrun: Bool?
+    public let promptmode: AnyCodable?
     public let extrasystemprompt: String?
     public let bootstrapcontextmode: AnyCodable?
     public let bootstrapcontextrunkind: AnyCodable?
     public let internalevents: [[String: AnyCodable]]?
     public let inputprovenance: [String: AnyCodable]?
+    public let voicewaketrigger: String?
     public let idempotencykey: String
     public let label: String?
 
@@ -627,11 +630,14 @@ public struct AgentParams: Codable, Sendable {
         besteffortdeliver: Bool?,
         lane: String?,
         cleanupbundlemcponrunend: Bool?,
+        modelrun: Bool?,
+        promptmode: AnyCodable?,
         extrasystemprompt: String?,
         bootstrapcontextmode: AnyCodable?,
         bootstrapcontextrunkind: AnyCodable?,
         internalevents: [[String: AnyCodable]]?,
         inputprovenance: [String: AnyCodable]?,
+        voicewaketrigger: String?,
         idempotencykey: String,
         label: String?)
     {
@@ -658,11 +664,14 @@ public struct AgentParams: Codable, Sendable {
         self.besteffortdeliver = besteffortdeliver
         self.lane = lane
         self.cleanupbundlemcponrunend = cleanupbundlemcponrunend
+        self.modelrun = modelrun
+        self.promptmode = promptmode
         self.extrasystemprompt = extrasystemprompt
         self.bootstrapcontextmode = bootstrapcontextmode
         self.bootstrapcontextrunkind = bootstrapcontextrunkind
         self.internalevents = internalevents
         self.inputprovenance = inputprovenance
+        self.voicewaketrigger = voicewaketrigger
         self.idempotencykey = idempotencykey
         self.label = label
     }
@@ -691,11 +700,14 @@ public struct AgentParams: Codable, Sendable {
         case besteffortdeliver = "bestEffortDeliver"
         case lane
         case cleanupbundlemcponrunend = "cleanupBundleMcpOnRunEnd"
+        case modelrun = "modelRun"
+        case promptmode = "promptMode"
         case extrasystemprompt = "extraSystemPrompt"
         case bootstrapcontextmode = "bootstrapContextMode"
         case bootstrapcontextrunkind = "bootstrapContextRunKind"
         case internalevents = "internalEvents"
         case inputprovenance = "inputProvenance"
+        case voicewaketrigger = "voiceWakeTrigger"
         case idempotencykey = "idempotencyKey"
         case label
     }
@@ -878,6 +890,20 @@ public struct NodePairRejectParams: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case requestid = "requestId"
+    }
+}
+
+public struct NodePairRemoveParams: Codable, Sendable {
+    public let nodeid: String
+
+    public init(
+        nodeid: String)
+    {
+        self.nodeid = nodeid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case nodeid = "nodeId"
     }
 }
 
@@ -4474,6 +4500,8 @@ public struct ChatEvent: Codable, Sendable {
         case stopreason = "stopReason"
     }
 }
+
+public struct UpdateStatusParams: Codable, Sendable {}
 
 public struct UpdateRunParams: Codable, Sendable {
     public let sessionkey: String?

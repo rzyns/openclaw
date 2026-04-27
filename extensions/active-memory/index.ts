@@ -7,6 +7,7 @@ import {
   resolveAgentDir,
   resolveAgentEffectiveModelPrimary,
   resolveAgentWorkspaceDir,
+  resolveDefaultModelForAgent,
 } from "openclaw/plugin-sdk/agent-runtime";
 import {
   resolveLivePluginConfigObject,
@@ -1550,13 +1551,11 @@ function extractRecentTurns(messages: unknown[]): ActiveRecallRecentTurn[] {
   return turns;
 }
 
-function parseModelCandidate(modelRef: string | undefined) {
+function parseModelCandidate(modelRef: string | undefined, defaultProvider = DEFAULT_PROVIDER) {
   if (!modelRef) {
     return undefined;
   }
-  return (
-    parseModelRef(modelRef, DEFAULT_PROVIDER) ?? { provider: DEFAULT_PROVIDER, model: modelRef }
-  );
+  return parseModelRef(modelRef, defaultProvider) ?? { provider: defaultProvider, model: modelRef };
 }
 
 function getModelRef(
@@ -1570,14 +1569,20 @@ function getModelRef(
 ): { provider: string; model: string } | undefined {
   const currentRunModel =
     ctx?.modelProviderId && ctx?.modelId ? `${ctx.modelProviderId}/${ctx.modelId}` : undefined;
+  const configuredDefaultModel = resolveAgentEffectiveModelPrimary(api.config, agentId)
+    ? resolveDefaultModelForAgent({ cfg: api.config, agentId })
+    : undefined;
+  const defaultProvider = configuredDefaultModel?.provider ?? DEFAULT_PROVIDER;
   const candidates = [
     config.model,
     currentRunModel,
-    resolveAgentEffectiveModelPrimary(api.config, agentId),
+    configuredDefaultModel
+      ? `${configuredDefaultModel.provider}/${configuredDefaultModel.model}`
+      : undefined,
     config.modelFallback,
   ];
   for (const candidate of candidates) {
-    const parsed = parseModelCandidate(candidate);
+    const parsed = parseModelCandidate(candidate, defaultProvider);
     if (parsed) {
       return parsed;
     }
@@ -1779,17 +1784,56 @@ async function maybeResolveActiveRecall(params: {
   }
 
   const controller = new AbortController();
+  const TIMEOUT_SENTINEL = Symbol("timeout");
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`active-memory timeout after ${params.config.timeoutMs}ms`));
   }, params.config.timeoutMs);
   timeoutId.unref?.();
 
+  const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => {
+        resolve(TIMEOUT_SENTINEL);
+      },
+      { once: true },
+    );
+  });
+
   try {
-    const { rawReply, transcriptPath, searchDebug } = await runRecallSubagent({
+    const subagentPromise = runRecallSubagent({
       ...params,
       modelRef: resolvedModelRef,
       abortSignal: controller.signal,
     });
+    // Silently catch late rejections after timeout so they don't become
+    // unhandled promise rejections.
+    subagentPromise.catch(() => undefined);
+
+    const raceResult = await Promise.race([subagentPromise, timeoutPromise]);
+
+    if (raceResult === TIMEOUT_SENTINEL) {
+      const result: ActiveRecallResult = {
+        status: "timeout",
+        elapsedMs: Date.now() - startedAt,
+        summary: null,
+      };
+      if (params.config.logging) {
+        params.api.logger.info?.(
+          `${logPrefix} done status=${result.status} elapsedMs=${String(result.elapsedMs)} summaryChars=0`,
+        );
+      }
+      await persistPluginStatusLines({
+        api: params.api,
+        agentId: params.agentId,
+        sessionKey: params.sessionKey,
+        statusLine: buildPluginStatusLine({ result, config: params.config }),
+        searchDebug: result.searchDebug,
+      });
+      return result;
+    }
+
+    const { rawReply, transcriptPath, searchDebug } = raceResult;
     const summary = truncateSummary(
       normalizeActiveSummary(rawReply) ?? "",
       params.config.maxSummaryChars,
@@ -1888,7 +1932,9 @@ export default definePluginEntry({
     warnDeprecatedModelFallbackPolicy(api.pluginConfig);
     const refreshLiveConfigFromRuntime = () => {
       const livePluginConfig = resolveLivePluginConfigObject(
-        api.runtime.config?.loadConfig,
+        api.runtime.config?.current
+          ? () => api.runtime.config.current() as OpenClawConfig
+          : undefined,
         "active-memory",
         api.pluginConfig as Record<string, unknown>,
       );
@@ -1909,7 +1955,7 @@ export default definePluginEntry({
           return { text: formatActiveMemoryCommandHelp() };
         }
         if (isGlobal) {
-          const currentConfig = api.runtime.config.loadConfig();
+          const currentConfig = api.runtime.config.current() as OpenClawConfig;
           if (action === "status") {
             return {
               text: `Active Memory: ${isActiveMemoryGloballyEnabled(currentConfig) ? "on" : "off"} globally.`,
@@ -1917,13 +1963,19 @@ export default definePluginEntry({
           }
           if (action === "on" || action === "enable" || action === "enabled") {
             const nextConfig = updateActiveMemoryGlobalEnabledInConfig(currentConfig, true);
-            await api.runtime.config.writeConfigFile(nextConfig);
+            await api.runtime.config.replaceConfigFile({
+              nextConfig,
+              afterWrite: { mode: "auto" },
+            });
             refreshLiveConfigFromRuntime();
             return { text: "Active Memory: on globally." };
           }
           if (action === "off" || action === "disable" || action === "disabled") {
             const nextConfig = updateActiveMemoryGlobalEnabledInConfig(currentConfig, false);
-            await api.runtime.config.writeConfigFile(nextConfig);
+            await api.runtime.config.replaceConfigFile({
+              nextConfig,
+              afterWrite: { mode: "auto" },
+            });
             refreshLiveConfigFromRuntime();
             return { text: "Active Memory: off globally." };
           }

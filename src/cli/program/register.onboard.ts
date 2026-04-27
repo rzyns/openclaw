@@ -47,10 +47,39 @@ const AUTH_CHOICE_HELP = formatAuthChoiceChoicesForCli({
   includeSkip: true,
 });
 
-const ONBOARD_AUTH_FLAGS = [
-  ...CORE_ONBOARD_AUTH_FLAGS,
-  ...resolveManifestProviderOnboardAuthFlags(),
-] as const;
+type OnboardAuthFlag = {
+  readonly cliOption: string;
+  readonly description: string;
+  readonly optionKey: string;
+};
+
+function extractCliFlags(cliOption: string): string[] {
+  return cliOption
+    .split(/[ ,|]+/)
+    .filter((part) => part.startsWith("-"))
+    .map((part) => {
+      const equalsIndex = part.indexOf("=");
+      return equalsIndex === -1 ? part : part.slice(0, equalsIndex);
+    });
+}
+
+function resolveOnboardAuthFlags(): OnboardAuthFlag[] {
+  const seenCliFlags = new Set<string>();
+  const flags: OnboardAuthFlag[] = [];
+  for (const flag of [...CORE_ONBOARD_AUTH_FLAGS, ...resolveManifestProviderOnboardAuthFlags()]) {
+    const cliFlags = extractCliFlags(flag.cliOption);
+    if (cliFlags.some((cliFlag) => seenCliFlags.has(cliFlag))) {
+      continue;
+    }
+    for (const cliFlag of cliFlags) {
+      seenCliFlags.add(cliFlag);
+    }
+    flags.push(flag);
+  }
+  return flags;
+}
+
+const ONBOARD_AUTH_FLAGS = resolveOnboardAuthFlags();
 
 function pickOnboardProviderAuthOptionValues(
   opts: Record<string, unknown>,
@@ -82,7 +111,7 @@ export function registerOnboardCommand(program: Command) {
       "Acknowledge that agents are powerful and full system access is risky (required for --non-interactive)",
       false,
     )
-    .option("--flow <flow>", "Onboard flow: quickstart|advanced|manual")
+    .option("--flow <flow>", "Onboard flow: quickstart|advanced|manual|import")
     .option("--mode <mode>", "Onboard mode: local|remote")
     .option("--auth-choice <choice>", `Auth: ${AUTH_CHOICE_HELP}`)
     .option(
@@ -139,6 +168,9 @@ export function registerOnboardCommand(program: Command) {
     .option("--skip-health", "Skip health check")
     .option("--skip-ui", "Skip Control UI/TUI prompts")
     .option("--node-manager <name>", "Node manager for skills: npm|pnpm|bun")
+    .option("--import-from <provider>", "Migration provider to run during onboarding")
+    .option("--import-source <path>", "Source agent home for --import-from")
+    .option("--import-secrets", "Import supported secrets during onboarding migration", false)
     .option("--json", "Output JSON summary", false);
 
   command.action(async (opts, commandRuntime) => {
@@ -166,7 +198,7 @@ export function registerOnboardCommand(program: Command) {
           workspace: opts.workspace as string | undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           acceptRisk: Boolean(opts.acceptRisk),
-          flow: opts.flow as "quickstart" | "advanced" | "manual" | undefined,
+          flow: opts.flow as "quickstart" | "advanced" | "manual" | "import" | undefined,
           mode: opts.mode as "local" | "remote" | undefined,
           authChoice: opts.authChoice as AuthChoice | undefined,
           tokenProvider: opts.tokenProvider as string | undefined,
@@ -206,6 +238,9 @@ export function registerOnboardCommand(program: Command) {
           skipHealth: Boolean(opts.skipHealth),
           skipUi: Boolean(opts.skipUi),
           nodeManager: opts.nodeManager as NodeManagerChoice | undefined,
+          importFrom: opts.importFrom as string | undefined,
+          importSource: opts.importSource as string | undefined,
+          importSecrets: Boolean(opts.importSecrets),
           json: Boolean(opts.json),
         },
         defaultRuntime,

@@ -19,7 +19,6 @@ import {
   SecretsConfigSchema,
 } from "./zod-schema.core.js";
 import { HookMappingSchema, HooksGmailSchema, InternalHooksSchema } from "./zod-schema.hooks.js";
-import { PluginInstallRecordShape } from "./zod-schema.installs.js";
 import { ChannelsSchema } from "./zod-schema.providers.js";
 import { sensitive } from "./zod-schema.sensitive.js";
 import {
@@ -186,6 +185,7 @@ const TalkSchema = z
   .object({
     provider: z.string().optional(),
     providers: z.record(z.string(), TalkProviderEntrySchema).optional(),
+    speechLocale: z.string().optional(),
     interruptOnSpeech: z.boolean().optional(),
     silenceTimeoutMs: z.number().int().positive().optional(),
   })
@@ -219,6 +219,7 @@ const McpServerSchema = z
     cwd: z.string().optional(),
     workingDirectory: z.string().optional(),
     url: HttpUrlSchema.optional(),
+    transport: z.union([z.literal("sse"), z.literal("streamable-http")]).optional(),
     headers: z
       .record(
         z.string(),
@@ -306,6 +307,9 @@ export const OpenClawSchema = z
           .object({
             enabled: z.boolean().optional(),
             endpoint: z.string().optional(),
+            tracesEndpoint: z.string().optional(),
+            metricsEndpoint: z.string().optional(),
+            logsEndpoint: z.string().optional(),
             protocol: z.union([z.literal("http/protobuf"), z.literal("grpc")]).optional(),
             headers: z.record(z.string(), z.string()).optional(),
             serviceName: z.string().optional(),
@@ -425,6 +429,8 @@ export const OpenClawSchema = z
                 cdpPort: z.number().int().min(1).max(65535).optional(),
                 cdpUrl: z.string().optional(),
                 userDataDir: z.string().optional(),
+                mcpCommand: z.string().optional(),
+                mcpArgs: z.array(z.string()).optional(),
                 driver: z
                   .union([z.literal("openclaw"), z.literal("clawd"), z.literal("existing-session")])
                   .optional(),
@@ -455,7 +461,7 @@ export const OpenClawSchema = z
         assistant: z
           .object({
             name: z.string().max(50).optional(),
-            avatar: z.string().max(200).optional(),
+            avatar: z.string().max(2_000_000).optional(),
           })
           .strict()
           .optional(),
@@ -593,6 +599,7 @@ export const OpenClawSchema = z
             enabled: z.boolean().optional(),
             after: z.number().int().min(1).optional(),
             cooldownMs: z.number().int().min(0).optional(),
+            includeSkipped: z.boolean().optional(),
             mode: z.enum(["announce", "webhook"]).optional(),
             accountId: z.string().optional(),
           })
@@ -998,16 +1005,6 @@ export const OpenClawSchema = z
           .strict()
           .optional(),
         entries: z.record(z.string(), PluginEntrySchema).optional(),
-        installs: z
-          .record(
-            z.string(),
-            z
-              .object({
-                ...PluginInstallRecordShape,
-              })
-              .strict(),
-          )
-          .optional(),
       })
       .strict()
       .optional(),
