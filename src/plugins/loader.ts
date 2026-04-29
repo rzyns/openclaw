@@ -2522,7 +2522,6 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       : discoverOpenClawPlugins({
           workspaceDir: options.workspaceDir,
           extraPaths: normalized.loadPaths,
-          cache: options.cache,
           env,
         });
     const manifestRegistry =
@@ -2530,7 +2529,6 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       loadPluginManifestRegistry({
         config: cfg,
         workspaceDir: options.workspaceDir,
-        cache: options.cache,
         env,
         candidates: discovery.candidates,
         diagnostics: discovery.diagnostics,
@@ -3417,7 +3415,6 @@ export async function loadOpenClawPluginCliRegistry(
   } = resolvePluginLoadCacheContext({
     ...options,
     activate: false,
-    cache: false,
   });
   const logger = options.logger ?? defaultLogger();
   const onlyPluginIdSet = createPluginIdScopeSet(onlyPluginIds);
@@ -3435,13 +3432,11 @@ export async function loadOpenClawPluginCliRegistry(
   const discovery = discoverOpenClawPlugins({
     workspaceDir: options.workspaceDir,
     extraPaths: normalized.loadPaths,
-    cache: false,
     env,
   });
   const manifestRegistry = loadPluginManifestRegistry({
     config: cfg,
     workspaceDir: options.workspaceDir,
-    cache: false,
     env,
     candidates: discovery.candidates,
     diagnostics: discovery.diagnostics,

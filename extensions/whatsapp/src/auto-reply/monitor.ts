@@ -28,6 +28,7 @@ import {
   sleepWithAbort,
 } from "../reconnect.js";
 import { formatError, getWebAuthAgeMs, logoutWeb, readWebSelfId } from "../session.js";
+import { resolveWhatsAppSocketTiming } from "../socket-timing.js";
 import { getRuntimeConfig, getRuntimeConfigSourceSnapshot } from "./config.runtime.js";
 import { whatsappHeartbeatLog, whatsappLog } from "./loggers.js";
 import { buildMentionConfig } from "./mentions.js";
@@ -133,6 +134,7 @@ async function clearTerminalWebAuthState(params: {
     );
   }
 }
+const DEFAULT_TRANSPORT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function monitorWebChannel(
   verbose: boolean,
@@ -174,6 +176,7 @@ export async function monitorWebChannel(
         mediaMaxMb: account.mediaMaxMb,
         blockStreaming: account.blockStreaming,
         groups: account.groups,
+        exposeErrorText: account.exposeErrorText,
       },
     },
   } satisfies ReturnType<typeof getRuntimeConfig>;
@@ -181,6 +184,7 @@ export async function monitorWebChannel(
   const maxMediaBytes = resolveWhatsAppMediaMaxBytes(account);
   const heartbeatSeconds = resolveHeartbeatSeconds(cfg, tuning.heartbeatSeconds);
   const reconnectPolicy = resolveReconnectPolicy(cfg, tuning.reconnect);
+  const socketTiming = resolveWhatsAppSocketTiming(cfg, tuning.socketTiming);
   const baseMentionConfig = buildMentionConfig(cfg);
   const groupHistoryLimit =
     account.historyLimit ??
@@ -218,6 +222,7 @@ export async function monitorWebChannel(
   };
   process.once("SIGINT", handleSigint);
 
+  const transportTimeoutMs = tuning.transportTimeoutMs ?? DEFAULT_TRANSPORT_TIMEOUT_MS;
   const messageTimeoutMs = tuning.messageTimeoutMs ?? 30 * 60 * 1000;
   const watchdogCheckMs = tuning.watchdogCheckMs ?? 60 * 1000;
   const controller = new WhatsAppConnectionController({
@@ -226,9 +231,11 @@ export async function monitorWebChannel(
     verbose,
     keepAlive,
     heartbeatSeconds,
+    transportTimeoutMs,
     messageTimeoutMs,
     watchdogCheckMs,
     reconnectPolicy,
+    socketTiming,
     abortSignal,
     sleep,
     isNonRetryableStatus: isNonRetryableWebCloseStatus,
@@ -325,6 +332,7 @@ export async function monitorWebChannel(
                 ? { minutesSinceLastMessage }
                 : {}),
             };
+            statusController.noteTransportActivity(snapshot.lastTransportActivityAt);
 
             if (minutesSinceLastMessage && minutesSinceLastMessage > 30) {
               heartbeatLogger.warn(
@@ -342,7 +350,7 @@ export async function monitorWebChannel(
             const minutesSinceTransportActivity = Math.floor(transportSilentMs / 60000);
             const minutesSinceAppActivity = Math.floor((now - appBaselineAt) / 60000);
             const watchdogReason =
-              transportSilentMs > messageTimeoutMs ? "transport-inactive" : "app-silent";
+              transportSilentMs > transportTimeoutMs ? "transport-inactive" : "app-silent";
             statusController.noteWatchdogStale();
             heartbeatLogger.warn(
               {
