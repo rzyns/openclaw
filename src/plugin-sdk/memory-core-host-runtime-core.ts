@@ -9,13 +9,13 @@ export {
 } from "../agents/tools/common.js";
 export { resolveCronStyleNow } from "../agents/current-time.js";
 export { resolveDefaultAgentId, resolveSessionAgentId } from "../agents/agent-scope.js";
+export { resolveMemorySearchConfig } from "../agents/memory-search.js";
 export { parseNonNegativeByteSize } from "../config/byte-size.js";
-export {
-  getRuntimeConfig,
-  /** @deprecated Use getRuntimeConfig(), or pass the already loaded config through the call path. */
-  loadConfig,
-} from "../config/config.js";
+export { getRuntimeConfig, loadConfig } from "../config/config.js";
+export type { OpenClawConfig } from "../config/config.js";
+export { resolveStateDir } from "../config/paths.js";
 export { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+export type { MemoryCitationsMode } from "../config/types.memory.js";
 export { emptyPluginConfigSchema } from "../plugins/config-schema.js";
 export type {
   MemoryCorpusGetResult,
